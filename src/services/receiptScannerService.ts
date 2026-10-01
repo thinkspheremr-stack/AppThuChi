@@ -140,8 +140,22 @@ export async function scanReceiptImage(
       });
 
       if (!res.ok) {
-        const errJson = await res.json().catch(() => null);
-        const errMsg = errJson?.error || `Máy chủ phản hồi lỗi ${res.status}`;
+        let errMsg = `Máy chủ phản hồi lỗi ${res.status}`;
+        try {
+          const errJson = await res.json();
+          if (typeof errJson?.error === 'string') {
+            errMsg = errJson.error;
+          } else if (errJson?.error?.message) {
+            errMsg = String(errJson.error.message);
+          } else if (typeof errJson?.message === 'string') {
+            errMsg = errJson.message;
+          }
+        } catch {
+          if (res.status === 502 || res.status === 503 || res.status === 504) {
+            errMsg =
+              'Máy chủ AI đang trong quá trình khởi động hoặc quá tải tạm thời (503). Đang tự động thử lại...';
+          }
+        }
 
         // If 503, 404 warmup, or model busy, retry after short backoff
         if (
@@ -158,7 +172,7 @@ export async function scanReceiptImage(
             continue;
           }
         }
-        throw new Error(errMsg);
+        throw new Error(typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg));
       }
 
       const json: ScanReceiptResponse = await res.json();
@@ -218,7 +232,16 @@ export async function scanReceiptImage(
   }
 
   // If all attempts failed, produce clean user-friendly message
-  let cleanMessage = lastError?.message || 'Không thể kết nối với dịch vụ nhận diện ảnh';
+  let cleanMessage = 'Không thể kết nối với dịch vụ nhận diện ảnh';
+  if (typeof lastError === 'string') {
+    cleanMessage = lastError;
+  } else if (typeof lastError?.message === 'string' && lastError.message !== '[object Object]') {
+    cleanMessage = lastError.message;
+  } else if (typeof lastError?.error === 'string') {
+    cleanMessage = lastError.error;
+  } else if (lastError?.error?.message) {
+    cleanMessage = String(lastError.error.message);
+  }
   if (
     cleanMessage.includes('503') ||
     cleanMessage.includes('high demand') ||

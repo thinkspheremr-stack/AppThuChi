@@ -191,10 +191,37 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
       setItems(mappedRows);
     } catch (err: any) {
       console.error('Scan error:', err);
-      let errMsg = err.message || 'Không thể nhận diện hình ảnh';
-      if (errMsg.includes('503') || errMsg.includes('high demand') || errMsg.includes('UNAVAILABLE')) {
-        errMsg = 'Máy chủ AI tạm thời đang chịu tải cao (503). Bạn có thể bấm "Thử lại ngay" hoặc thêm giao dịch thủ công từ ảnh bên dưới.';
+      let errMsg = 'Không thể nhận diện hình ảnh từ máy chủ AI.';
+
+      if (typeof err === 'string') {
+        errMsg = err;
+      } else if (typeof err?.message === 'string' && err.message !== '[object Object]') {
+        errMsg = err.message;
+      } else if (typeof err?.error === 'string') {
+        errMsg = err.error;
+      } else if (err?.error?.message && typeof err.error.message === 'string') {
+        errMsg = err.error.message;
+      } else {
+        try {
+          const str = JSON.stringify(err);
+          if (str && str !== '{}') errMsg = str;
+        } catch {
+          // ignore
+        }
       }
+
+      if (
+        errMsg.includes('503') ||
+        errMsg.includes('high demand') ||
+        errMsg.includes('UNAVAILABLE')
+      ) {
+        errMsg =
+          'Mô hình AI tạm thời đang chịu tải cao (503). Vui lòng bấm "Thử lại ngay" để hệ thống chuyển sang mô hình dự phòng nhẹ hơn.';
+      } else if (errMsg.includes('404')) {
+        errMsg =
+          'Máy chủ AI đang làm nóng khởi động. Vui lòng bấm "Thử lại ngay".';
+      }
+
       setScanError(errMsg);
 
       // If failed, create at least 1 empty row so user can quickly type looking at the photo

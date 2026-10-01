@@ -1,6 +1,7 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
@@ -13,7 +14,7 @@ const __dirname = path.dirname(__filename);
 async function startServer() {
   const app = express();
 
-  // Always use port 3000 for the app (Nginx listens on 8080 and proxies to 3000)
+  // Always use port 3000 for the app (Nginx in container listens on 8080 and proxies to 3000)
   const portArgIndex = process.argv.indexOf('--port');
   const portArg = portArgIndex !== -1 ? Number(process.argv[portArgIndex + 1]) : null;
   const PORT = portArg || Number(process.env.DEFAULT_APP_PORT) || 3000;
@@ -22,7 +23,10 @@ async function startServer() {
   app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    res.header(
+      'Access-Control-Allow-Headers',
+      'Origin, X-Requested-With, Content-Type, Accept, Authorization'
+    );
     if (req.method === 'OPTIONS') {
       return res.sendStatus(204);
     }
@@ -43,16 +47,21 @@ async function startServer() {
     },
   });
 
-  // Candidate models for automatic fallback on 503 / high demand spikes
+  // Candidate models: Start with gemini-3.1-flash-lite (fastest, most available, no 503 spikes),
+  // with automatic fallback to gemini-flash-latest and gemini-3.8-flash
   const CANDIDATE_MODELS = [
-    'gemini-3.8-flash',
-    'gemini-flash-latest',
     'gemini-3.1-flash-lite',
+    'gemini-flash-latest',
+    'gemini-3.8-flash',
   ];
 
   // API Route: Scan & Extract ALL Transaction Details from Image (Supports both single receipts and full transaction history lists)
   app.get(['/api/scan-receipt', '/api/scan-receipt/'], (_req, res) => {
-    res.json({ status: 'active', message: 'Endpoint sẵn sàng nhận POST request chứa imageBase64' });
+    res.json({
+      status: 'active',
+      models: CANDIDATE_MODELS,
+      message: 'Endpoint sẵn sàng nhận POST request chứa imageBase64',
+    });
   });
 
   app.post(['/api/scan-receipt', '/api/scan-receipt/'], async (req, res) => {
@@ -135,7 +144,8 @@ Quy tắc phân loại từng giao dịch:
                       properties: {
                         type: {
                           type: Type.STRING,
-                          description: "'income' cho tiền vào (+), 'expense' cho tiền ra (-), 'transfer' cho chuyển khoản",
+                          description:
+                            "'income' cho tiền vào (+), 'expense' cho tiền ra (-), 'transfer' cho chuyển khoản",
                         },
                         amount: {
                           type: Type.NUMBER,
@@ -151,7 +161,8 @@ Quy tắc phân loại từng giao dịch:
                         },
                         bankName: {
                           type: Type.STRING,
-                          description: 'Tên ngân hàng hoặc ví (Timo, Vietcombank, MB Bank, v.v.)',
+                          description:
+                            'Tên ngân hàng hoặc ví (Timo, Vietcombank, MB Bank, v.v.)',
                         },
                         accountNumber: {
                           type: Type.STRING,
@@ -159,15 +170,18 @@ Quy tắc phân loại từng giao dịch:
                         },
                         description: {
                           type: Type.STRING,
-                          description: 'Tên người nhận, người gửi hoặc nội dung chi tiết',
+                          description:
+                            'Tên người nhận, người gửi hoặc nội dung chi tiết',
                         },
                         note: {
                           type: Type.STRING,
-                          description: 'Ghi chú phụ hoặc chi tiết thêm nếu có (ví dụ số tài khoản, ghi chú phụ, v.v.)',
+                          description:
+                            'Ghi chú phụ hoặc chi tiết thêm nếu có (ví dụ số tài khoản, ghi chú phụ, v.v.)',
                         },
                         categorySuggestion: {
                           type: Type.STRING,
-                          description: 'Gợi ý danh mục phù hợp (Ăn uống, Sức khỏe, Mua sắm, v.v.)',
+                          description:
+                            'Gợi ý danh mục phù hợp (Ăn uống, Sức khỏe, Mua sắm, v.v.)',
                         },
                         rawSummary: {
                           type: Type.STRING,
@@ -179,7 +193,8 @@ Quy tắc phân loại từng giao dịch:
                   },
                   overallSummary: {
                     type: Type.STRING,
-                    description: 'Tóm tắt tổng quan về toàn bộ các giao dịch phát hiện được',
+                    description:
+                      'Tóm tắt tổng quan về toàn bộ các giao dịch phát hiện được',
                   },
                 },
                 required: ['transactions'],
@@ -192,11 +207,16 @@ Quy tắc phân loại từng giao dịch:
             break; // Success!
           }
         } catch (err: any) {
-          lastErrorMessage = err?.message || String(err);
+          let errStr = err?.message || String(err);
+          if (err?.error?.message) {
+            errStr = err.error.message;
+          }
+          lastErrorMessage = errStr;
           console.warn(`Model ${modelName} encountered error:`, lastErrorMessage);
+
           // Small pause before trying fallback model
           if (i < CANDIDATE_MODELS.length - 1) {
-            await new Promise((resolve) => setTimeout(resolve, 500));
+            await new Promise((resolve) => setTimeout(resolve, 600));
           }
         }
       }
@@ -216,26 +236,58 @@ Quy tắc phân loại từng giao dịch:
       });
     } catch (err: any) {
       console.error('Lỗi khi quét ảnh giao dịch:', err);
+
+      let cleanMsg = 'Không thể nhận diện hình ảnh giao dịch';
+      if (typeof err?.message === 'string') {
+        cleanMsg = err.message;
+      } else if (typeof err === 'string') {
+        cleanMsg = err;
+      } else if (err?.error?.message) {
+        cleanMsg = String(err.error.message);
+      }
+
+      // Try parsing if cleanMsg is a raw JSON string like {"error":{"code":503...}}
+      if (cleanMsg.startsWith('{') && cleanMsg.includes('"message"')) {
+        try {
+          const parsed = JSON.parse(cleanMsg);
+          if (parsed?.error?.message) {
+            cleanMsg = parsed.error.message;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      const isHighDemand =
+        cleanMsg.includes('503') ||
+        cleanMsg.includes('high demand') ||
+        cleanMsg.includes('UNAVAILABLE');
+
       return res.status(500).json({
         success: false,
-        error:
-          err.message?.includes('503') || err.message?.includes('high demand')
-            ? 'Hệ thống AI tạm thời đang chịu tải cao (503). Đang kích hoạt chế độ thử lại tự động.'
-            : err.message || 'Không thể nhận diện hình ảnh giao dịch',
+        error: isHighDemand
+          ? 'Hệ thống AI tạm thời đang chịu tải cao (503). Đang kích hoạt thử lại tự động.'
+          : cleanMsg,
       });
     }
   });
 
   // Health check
-  app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', serverTime: new Date().toISOString() });
+  app.get(['/api/health', '/api/health/'], (_req, res) => {
+    res.json({
+      status: 'ok',
+      serverTime: new Date().toISOString(),
+      nodeEnv: process.env.NODE_ENV,
+      port: PORT,
+    });
   });
 
   // Integrate Vite for dev mode or serve static files in production
-  if (process.env.NODE_ENV === 'production') {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
+  const distPath = path.resolve(__dirname, 'dist');
+  if (process.env.NODE_ENV === 'production' && fs.existsSync(distPath)) {
+    app.use(express.static(distPath));
     app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      res.sendFile(path.resolve(distPath, 'index.html'));
     });
   } else {
     const vite = await createViteServer({
