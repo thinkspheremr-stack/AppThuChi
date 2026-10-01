@@ -12,11 +12,26 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
 
-  // Body parsing with 25MB limit for high-res screenshots
-  app.use(express.json({ limit: '25mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+  // Always use port 3000 for the app (Nginx listens on 8080 and proxies to 3000)
+  const portArgIndex = process.argv.indexOf('--port');
+  const portArg = portArgIndex !== -1 ? Number(process.argv[portArgIndex + 1]) : null;
+  const PORT = portArg || Number(process.env.DEFAULT_APP_PORT) || 3000;
+
+  // CORS and Preflight handler
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+    next();
+  });
+
+  // Body parsing with 32MB limit for high-res screenshots
+  app.use(express.json({ limit: '32mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '32mb' }));
 
   // Initialize Gemini API client on server-side
   const ai = new GoogleGenAI({
@@ -36,7 +51,11 @@ async function startServer() {
   ];
 
   // API Route: Scan & Extract ALL Transaction Details from Image (Supports both single receipts and full transaction history lists)
-  app.post('/api/scan-receipt', async (req, res) => {
+  app.get(['/api/scan-receipt', '/api/scan-receipt/'], (_req, res) => {
+    res.json({ status: 'active', message: 'Endpoint sẵn sàng nhận POST request chứa imageBase64' });
+  });
+
+  app.post(['/api/scan-receipt', '/api/scan-receipt/'], async (req, res) => {
     try {
       const { imageBase64, mimeType } = req.body;
 

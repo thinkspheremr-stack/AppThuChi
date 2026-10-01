@@ -81,6 +81,8 @@ export const BankManager: React.FC<BankManagerProps> = ({
   const [autoAdd000, setAutoAdd000] = useState<boolean>(true);
   // Nội dung: gõ trực tiếp
   const [inputDescription, setInputDescription] = useState<string>('');
+  // Danh mục chọn nhanh (Đồng nhất với khi up ảnh)
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
 
   // AI Receipt Scanner Modal state
   const [isScannerModalOpen, setIsScannerModalOpen] = useState<boolean>(false);
@@ -224,9 +226,13 @@ export const BankManager: React.FC<BankManagerProps> = ({
       }
     } else {
       // Regular Chi or Thu
-      const defaultCat = categories.find(
+      const relevantCats = categories.filter(
         (c) => c.type === (subTab === 'thu' ? 'income' : 'expense')
       );
+      const catToUse =
+        selectedCategoryId && relevantCats.some((c) => c.id === selectedCategoryId)
+          ? selectedCategoryId
+          : relevantCats[0]?.id;
 
       onAddTransaction({
         type: subTab === 'thu' ? 'income' : 'expense',
@@ -234,7 +240,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
         date: formattedDate,
         time: new Date().toTimeString().slice(0, 5),
         accountId: activeAccount.id,
-        categoryId: defaultCat?.id,
+        categoryId: catToUse,
         description: inputDescription.trim() || (subTab === 'thu' ? 'Khoản thu' : 'Khoản chi'),
         note: `Ghi nhanh tại ${activeAccount.name}`,
       });
@@ -832,7 +838,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
             ) : null}
 
             {/* Cột 4: Nội Dung */}
-            <div className={subTab === 'chuyen' ? 'sm:col-span-2' : 'sm:col-span-5'}>
+            <div className={subTab === 'chuyen' ? 'sm:col-span-2' : 'sm:col-span-3'}>
               <label className="block text-[11px] font-black text-sky-100 mb-1">
                 Nội Dung
               </label>
@@ -855,6 +861,38 @@ export const BankManager: React.FC<BankManagerProps> = ({
                 (Ghi chú khoản giao dịch)
               </span>
             </div>
+
+            {/* Cột 4b: Danh Mục (CHỖ MÀU VÀNG THEO YÊU CẦU ĐỂ ĐỒNG NHẤT KHI UP ẢNH) */}
+            {subTab !== 'chuyen' && (
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-black text-sky-100 mb-1">
+                  Danh Mục
+                </label>
+                <select
+                  value={
+                    selectedCategoryId &&
+                    categories
+                      .filter((c) => c.type === (subTab === 'thu' ? 'income' : 'expense'))
+                      .some((c) => c.id === selectedCategoryId)
+                      ? selectedCategoryId
+                      : categories.filter((c) => c.type === (subTab === 'thu' ? 'income' : 'expense'))[0]?.id || ''
+                  }
+                  onChange={(e) => setSelectedCategoryId(e.target.value)}
+                  className="w-full px-2.5 py-2 rounded-xl bg-white text-slate-900 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-sky-400 shadow-inner"
+                >
+                  {categories
+                    .filter((c) => c.type === (subTab === 'thu' ? 'income' : 'expense'))
+                    .map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </option>
+                    ))}
+                </select>
+                <span className="text-[10px] text-sky-300 block mt-0.5 italic">
+                  (Đồng nhất khi up ảnh)
+                </span>
+              </div>
+            )}
 
             {/* Cột 5: Nút Ghi */}
             <div className="sm:col-span-2">
