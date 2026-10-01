@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Account, AccountType, Category, Transaction } from '../types';
 import { formatCurrency, formatFriendlyDate } from '../utils/formatters';
 import { CategoryIcon } from './CategoryIcon';
+import { ReceiptScannerModal } from './ReceiptScannerModal';
 import {
   Plus,
   ArrowRightLeft,
@@ -19,6 +20,7 @@ import {
   Check,
   Building2,
   Coins,
+  Camera,
 } from 'lucide-react';
 
 interface BankManagerProps {
@@ -34,6 +36,7 @@ interface BankManagerProps {
   onOpenTransfer: (sourceAccountId?: string) => void;
   onOpenSalaryAllocation: () => void;
   onAddTransaction: (transaction: Omit<Transaction, 'id' | 'createdAt'>) => void;
+  onAddBatchTransactions?: (transactions: Array<Omit<Transaction, 'id' | 'createdAt'>>) => void;
   onDeleteTransaction: (id: string) => void;
 }
 
@@ -50,6 +53,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
   onOpenTransfer,
   onOpenSalaryAllocation,
   onAddTransaction,
+  onAddBatchTransactions,
   onDeleteTransaction,
 }) => {
   // Active bank
@@ -77,6 +81,9 @@ export const BankManager: React.FC<BankManagerProps> = ({
   const [autoAdd000, setAutoAdd000] = useState<boolean>(true);
   // Nội dung: gõ trực tiếp
   const [inputDescription, setInputDescription] = useState<string>('');
+
+  // AI Receipt Scanner Modal state
+  const [isScannerModalOpen, setIsScannerModalOpen] = useState<boolean>(false);
 
   // Target account for transfer between banks
   const otherAccounts = accounts.filter((a) => a.id !== activeAccountId);
@@ -433,6 +440,20 @@ export const BankManager: React.FC<BankManagerProps> = ({
               <span>Chuyển Tiền</span>
             </button>
 
+            {/* Up ảnh thông báo / Quét giao dịch AI */}
+            <button
+              type="button"
+              onClick={() => setIsScannerModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white font-black text-xs rounded-xl shadow-xs transition-all hover:scale-102 active:scale-98"
+              title="Tải ảnh thông báo biến động số dư để AI tự động lấy thông tin giao dịch"
+            >
+              <Camera className="w-3.5 h-3.5" />
+              <span>Up Ảnh Giao Dịch</span>
+              <span className="bg-white/20 text-[10px] px-1.5 py-0.2 rounded-full font-extrabold uppercase">
+                AI
+              </span>
+            </button>
+
             {/* Edit active bank */}
             {activeAccount && (
               <button
@@ -654,11 +675,24 @@ export const BankManager: React.FC<BankManagerProps> = ({
                   : `Chuyển từ ${activeAccount?.name} vào Mục Tiết Kiệm:`
                 : `Ghi nhanh mục ${subTab === 'chi' ? 'CHI' : 'THU'} vào ${activeAccount?.name}:`}
             </span>
-            {rawNum > 0 && (
-              <span className="text-xs font-black text-amber-300 bg-black/30 px-2.5 py-0.5 rounded-lg border border-amber-400/30">
-                Thành tiền: {formatCurrency(calculatedAmount)}
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              {rawNum > 0 && (
+                <span className="text-xs font-black text-amber-300 bg-black/30 px-2.5 py-0.5 rounded-lg border border-amber-400/30">
+                  Thành tiền: {formatCurrency(calculatedAmount)}
+                </span>
+              )}
+
+              {/* Shortcut up ảnh nhanh khi nhác ghi */}
+              <button
+                type="button"
+                onClick={() => setIsScannerModalOpen(true)}
+                className="text-[11px] font-bold text-sky-100 hover:text-white bg-sky-800/80 hover:bg-emerald-600 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1.5 border border-sky-500/50 shadow-2xs"
+                title="Nhác ghi thì chụp lại thông báo để AI tự động điền"
+              >
+                <Camera className="w-3.5 h-3.5 text-emerald-300" />
+                <span>Nhác ghi? Up ảnh thông báo</span>
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
@@ -1202,6 +1236,23 @@ export const BankManager: React.FC<BankManagerProps> = ({
           </div>
         </div>
       )}
+
+      {/* AI Receipt Scanner Modal */}
+      <ReceiptScannerModal
+        isOpen={isScannerModalOpen}
+        onClose={() => setIsScannerModalOpen(false)}
+        accounts={accounts}
+        categories={categories}
+        activeAccountId={activeAccountId}
+        currentMonth={currentMonth}
+        onSaveTransactions={(batch) => {
+          if (onAddBatchTransactions) {
+            onAddBatchTransactions(batch);
+          } else {
+            batch.forEach((item) => onAddTransaction(item));
+          }
+        }}
+      />
     </div>
   );
 };

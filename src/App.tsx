@@ -256,6 +256,20 @@ export default function App() {
     triggerAutoBackup(rawAccounts, nextTransactions, categories, reminders);
   };
 
+  const handleSaveBatchTransactions = (
+    batchData: Array<Omit<Transaction, 'id' | 'createdAt'>>
+  ) => {
+    if (!batchData.length) return;
+    const newTxs: Transaction[] = batchData.map((d, index) => ({
+      ...d,
+      id: `tx-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 7)}`,
+      createdAt: Date.now() - index * 10,
+    }));
+    const nextTransactions = [...newTxs, ...transactions];
+    setTransactions(nextTransactions);
+    triggerAutoBackup(rawAccounts, nextTransactions, categories, reminders);
+  };
+
   const handleDeleteTransaction = (id: string) => {
     const nextTransactions = transactions.filter((t) => t.id !== id);
     setTransactions(nextTransactions);
@@ -401,12 +415,11 @@ export default function App() {
           setTransactions(json.transactions);
           if (json.reminders) setReminders(json.reminders);
           triggerAutoBackup(json.accounts, json.transactions, categories, json.reminders || reminders);
-          alert('Khôi phục dữ liệu thành công!');
         } else {
-          alert('Tệp sao lưu không đúng định dạng!');
+          console.warn('Tệp sao lưu không đúng định dạng!');
         }
       } catch (err) {
-        alert('Có lỗi khi đọc file JSON!');
+        console.error('Có lỗi khi đọc file JSON:', err);
       }
     };
     reader.readAsText(file);
@@ -498,6 +511,7 @@ export default function App() {
               onOpenTransfer={handleOpenTransfer}
               onOpenSalaryAllocation={() => setIsSalaryModalOpen(true)}
               onAddTransaction={handleSaveTransaction}
+              onAddBatchTransactions={handleSaveBatchTransactions}
               onDeleteTransaction={handleDeleteTransaction}
             />
 
@@ -543,6 +557,8 @@ export default function App() {
           <DebtManager
             debts={debts}
             accounts={accounts}
+            transactions={transactions}
+            currentMonth={currentMonth}
             onAddDebt={handleAddDebt}
             onEditDebt={handleEditDebt}
             onDeleteDebt={handleDeleteDebt}
@@ -591,6 +607,29 @@ export default function App() {
         isSyncing={isSyncing}
         onBackupNow={handleManualBackupNow}
         onRestoreFromCloud={handleManualRestoreFromCloud}
+        onExportJSON={handleExportJSON}
+        onImportJSON={handleImportJSON}
+        onGetBackupPayload={() => ({
+          accounts: rawAccounts,
+          transactions,
+          categories,
+          reminders,
+          exportedAt: new Date().toISOString(),
+          version: 1,
+        })}
+        onApplyBackupPayload={(payload) => {
+          if (payload.accounts && payload.transactions) {
+            setRawAccounts(payload.accounts);
+            setTransactions(payload.transactions);
+            if (payload.reminders) setReminders(payload.reminders);
+            triggerAutoBackup(
+              payload.accounts,
+              payload.transactions,
+              categories,
+              payload.reminders || reminders
+            );
+          }
+        }}
       />
     </div>
   );

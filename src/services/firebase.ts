@@ -49,9 +49,43 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = (firebaseConfig as any).firestoreDatabaseId
+  ? getFirestore(app, (firebaseConfig as any).firestoreDatabaseId)
+  : getFirestore(app);
 export const auth = getAuth(app);
+
+// Provider with Google Drive scope for backup
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.addScope('https://www.googleapis.com/auth/drive.file');
+
+// In-memory access token cache (NOT stored in localStorage or sessionStorage)
+let cachedAccessToken: string | null = null;
+
+export const setCachedAccessToken = (token: string | null) => {
+  cachedAccessToken = token;
+};
+
+export const getCachedAccessToken = (): string | null => {
+  return cachedAccessToken;
+};
+
+// Clear token on sign out
+onAuthStateChanged(auth, (user) => {
+  if (!user) {
+    cachedAccessToken = null;
+  }
+});
+
+// Helper for sign in that also extracts and caches the Google access token
+export const signInWithGoogle = async (): Promise<{ user: User; accessToken?: string }> => {
+  const result = await signInWithPopup(auth, googleProvider);
+  const credential = GoogleAuthProvider.credentialFromResult(result);
+  const token = credential?.accessToken || null;
+  if (token) {
+    setCachedAccessToken(token);
+  }
+  return { user: result.user, accessToken: token || undefined };
+};
 
 // Test connection
 export async function testFirestoreConnection() {
@@ -64,8 +98,7 @@ export async function testFirestoreConnection() {
   }
 }
 
-// Call test connection on load
 testFirestoreConnection();
 
-export { signInWithPopup, signOut, onAuthStateChanged };
+export { signInWithPopup, signOut, onAuthStateChanged, GoogleAuthProvider };
 export type { User };

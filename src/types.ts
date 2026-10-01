@@ -90,3 +90,19 @@ export interface DebtRecord {
   payments: DebtPayment[]; // Lịch sử thanh toán từng đợt
   createdAt: number;
 }
+
+// ============================================================================
+// TÀI SẢN DỰ PHÒNG & NGUỒN CÂN ĐỐI TRẢ NỢ (GOLD, REAL ESTATE, SAVINGS, ETC.)
+// ============================================================================
+export type DebtAssetType = 'gold' | 'real_estate' | 'saving' | 'stock' | 'vehicle' | 'other';
+
+export interface DebtAsset {
+  id: string;
+  name: string;
+  type: DebtAssetType;
+  estimatedValue: number; // Giá trị ước tính (VNĐ)
+  quantity?: string; // Số lượng (ví dụ: "3 lượng SJC", "1 căn chung cư 75m2", "5.000 CP")
+  liquidity?: 'high' | 'medium' | 'low'; // Khả năng thanh khoản / bán nhanh
+  note?: string; // Ghi chú (ví dụ: Đang gửi két sắt, Có thể bán ngay, v.v.)
+  createdAt: number;
+}
