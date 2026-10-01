@@ -1,0 +1,6 @@
+{
+  "name": "Sổ Thu Chi - Quản Lý Tài Chính & Ngân Hàng",
+  "description": "Ứng dụng quản lý thu chi cá nhân, phân loại tài khoản ngân hàng và ví điện tử, biểu đồ thống kê trực quan và nhắc nhở chi tiêu hàng ngày.",
+  "requestFramePermissions": ["notifications"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

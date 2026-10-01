@@ -1,0 +1,108 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with email and metadata",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "lastSyncedAt": { "type": "string" }
+      },
+      "required": ["email"]
+    },
+    "Account": {
+      "title": "Account",
+      "description": "Bank account or e-wallet owned by user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["bank", "wallet", "cash", "credit"] },
+        "bankName": { "type": "string" },
+        "accountNumber": { "type": "string" },
+        "balance": { "type": "number" },
+        "initialBalance": { "type": "number" },
+        "color": { "type": "string" },
+        "iconName": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "name", "type", "color", "userId"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Financial transaction record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["expense", "income", "transfer"] },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "accountId": { "type": "string" },
+        "toAccountId": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "description": { "type": "string" },
+        "note": { "type": "string" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "type", "amount", "date", "accountId", "description", "userId"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Spending or earning category",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["expense", "income"] },
+        "icon": { "type": "string" },
+        "color": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "name", "type", "icon", "color", "userId"]
+    },
+    "Reminder": {
+      "title": "Reminder",
+      "description": "Expense reminder settings",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "type": { "type": "string", "enum": ["daily", "monthly", "custom"] },
+        "time": { "type": "string" },
+        "dayOfMonth": { "type": "number" },
+        "enabled": { "type": "boolean" },
+        "message": { "type": "string" },
+        "soundEnabled": { "type": "boolean" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "title", "type", "time", "enabled", "message", "userId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile"
+    },
+    "/users/{userId}/accounts/{accountId}": {
+      "schema": "Account",
+      "description": "User bank and wallet accounts"
+    },
+    "/users/{userId}/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "User transactions"
+    },
+    "/users/{userId}/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "User custom categories"
+    },
+    "/users/{userId}/reminders/{reminderId}": {
+      "schema": "Reminder",
+      "description": "User reminders"
+    }
+  }
+}

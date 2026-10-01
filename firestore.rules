@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // User Profile
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+
+      // User Accounts (Banks & Wallets)
+      match /accounts/{accountId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // User Transactions
+      match /transactions/{transactionId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // User Categories
+      match /categories/{categoryId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // User Reminders
+      match /reminders/{reminderId} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+  }
+}
