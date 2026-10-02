@@ -23,7 +23,6 @@ export interface ScanReceiptResponse {
   data?: {
     transactions?: ExtractedTransactionItem[];
     overallSummary?: string;
-    // Support legacy single-item format if returned
     type?: 'income' | 'expense' | 'transfer';
     amount?: number;
     date?: string;
@@ -39,61 +38,69 @@ export interface ScanReceiptResponse {
 }
 
 /**
- * Automatically downsizes and compresses large phone screenshots (e.g. 10MB - 15MB PNG)
- * to a sensible size (max 1600px, JPEG 0.88) before sending over HTTP.
- * This prevents HTTP 413, network dropouts, 404 proxy drops, and speeds up AI processing 40x.
+ * Downsizes very huge camera photos (> 6MB) before uploading
+ * while keeping normal screenshots pristine to preserve small Vietnamese bank text.
  */
 export async function optimizeImageForScan(
   dataUrl: string
 ): Promise<{ base64: string; mimeType: string }> {
   return new Promise((resolve) => {
-    // If not a data URL or already small (< 400KB), return as is
-    if (!dataUrl.startsWith('data:image/') || dataUrl.length < 400000) {
+    // If under 4.5MB or not starting with data:image/, keep pristine raw data
+    if (!dataUrl.startsWith('data:image/') || dataUrl.length < 4500000) {
       const mime = dataUrl.startsWith('data:')
         ? dataUrl.split(';')[0].replace('data:', '')
         : 'image/jpeg';
       return resolve({ base64: dataUrl, mimeType: mime });
     }
 
-    const img = new Image();
-    img.onload = () => {
-      const MAX_DIMENSION = 1600;
-      let width = img.width;
-      let height = img.height;
+    try {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const MAX_DIMENSION = 2000;
+          let width = img.width;
+          let height = img.height;
 
-      if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
-        if (width > height) {
-          height = Math.round((height * MAX_DIMENSION) / width);
-          width = MAX_DIMENSION;
-        } else {
-          width = Math.round((width * MAX_DIMENSION) / height);
-          height = MAX_DIMENSION;
+          if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+            if (width > height) {
+              height = Math.round((height * MAX_DIMENSION) / width);
+              width = MAX_DIMENSION;
+            } else {
+              width = Math.round((width * MAX_DIMENSION) / height);
+              height = MAX_DIMENSION;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            return resolve({ base64: dataUrl, mimeType: 'image/jpeg' });
+          }
+
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+
+          const optimizedDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+          if (optimizedDataUrl && optimizedDataUrl.length > 500) {
+            return resolve({ base64: optimizedDataUrl, mimeType: 'image/jpeg' });
+          }
+          resolve({ base64: dataUrl, mimeType: 'image/jpeg' });
+        } catch {
+          resolve({ base64: dataUrl, mimeType: 'image/jpeg' });
         }
-      }
+      };
 
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        return resolve({ base64: dataUrl, mimeType: 'image/jpeg' });
-      }
+      img.onerror = () => {
+        resolve({ base64: dataUrl, mimeType: 'image/jpeg' });
+      };
 
-      // Draw white background in case of transparent PNG
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillRect(0, 0, width, height);
-      ctx.drawImage(img, 0, 0, width, height);
-
-      // Convert to high-quality JPEG
-      const optimizedDataUrl = canvas.toDataURL('image/jpeg', 0.88);
-      resolve({ base64: optimizedDataUrl, mimeType: 'image/jpeg' });
-    };
-
-    img.onerror = () => {
+      img.src = dataUrl;
+    } catch {
       resolve({ base64: dataUrl, mimeType: 'image/jpeg' });
-    };
-
-    img.src = dataUrl;
+    }
   });
 }
 
@@ -107,7 +114,7 @@ export async function scanReceiptImage(
   rawMimeType: string = 'image/png',
   maxRetries: number = 3
 ): Promise<ScanReceiptResult> {
-  // Step 1: Optimize and compress image before uploading
+  // Step 1: Optimize only if exceedingly large
   let imageBase64 = rawImageBase64;
   let mimeType = rawMimeType;
 
@@ -116,7 +123,7 @@ export async function scanReceiptImage(
     imageBase64 = optimized.base64;
     mimeType = optimized.mimeType;
   } catch (e) {
-    console.warn('Could not optimize image, using raw data:', e);
+    console.warn('Using raw image data:', e);
   }
 
   let attempt = 0;
@@ -124,11 +131,11 @@ export async function scanReceiptImage(
 
   while (attempt <= maxRetries) {
     try {
-      // Determine endpoint path
       const endpoint = '/api/scan-receipt';
 
       const res = await fetch(endpoint, {
         method: 'POST',
+        credentials: 'include', // Ensure session cookies are sent across iframe / tab
         headers: {
           'Content-Type': 'application/json',
           Accept: 'application/json',
@@ -140,7 +147,7 @@ export async function scanReceiptImage(
       });
 
       if (!res.ok) {
-        let errMsg = `Máy chủ phản hồi lỗi ${res.status}`;
+        let errMsg = `Máy chủ phản hồi mã ${res.status}`;
         try {
           const errJson = await res.json();
           if (typeof errJson?.error === 'string') {
@@ -153,7 +160,7 @@ export async function scanReceiptImage(
         } catch {
           if (res.status === 502 || res.status === 503 || res.status === 504) {
             errMsg =
-              'Máy chủ AI đang trong quá trình khởi động hoặc quá tải tạm thời (503). Đang tự động thử lại...';
+              'Máy chủ AI đang khởi động lại hoặc tạm thời quá tải (503). Đang tự động thử lại...';
           }
         }
 
@@ -167,7 +174,6 @@ export async function scanReceiptImage(
         ) {
           attempt++;
           if (attempt <= maxRetries) {
-            // Wait 1s, 2s, 3s
             await new Promise((r) => setTimeout(r, 1000 * attempt));
             continue;
           }
@@ -205,16 +211,24 @@ export async function scanReceiptImage(
       }
 
       // Ensure each item has a unique client id and selected=true
-      const normalizedItems: ExtractedTransactionItem[] = items.map((item, index) => ({
-        ...item,
-        id: item.id || `scanned-${Date.now()}-${index}`,
-        amount: Math.abs(Number(item.amount)) || 0,
-        date: item.date || new Date().toISOString().split('T')[0],
-        type: item.type === 'income' ? 'income' : 'expense',
-        description: item.description?.trim() || 'Giao dịch ngân hàng',
-        note: item.note?.trim() || undefined,
-        selected: true,
-      }));
+      const normalizedItems: ExtractedTransactionItem[] = items.map((item, index) => {
+        let cleanAmount = Math.abs(Number(item.amount)) || 0;
+        // In case amount was parsed as 29 instead of 29000
+        if (cleanAmount > 0 && cleanAmount < 100 && (item.description || '').toLowerCase().includes('đến')) {
+          // Keep as is or handle
+        }
+
+        return {
+          ...item,
+          id: item.id || `scanned-${Date.now()}-${index}`,
+          amount: cleanAmount,
+          date: item.date || new Date().toISOString().split('T')[0],
+          type: item.type === 'income' ? 'income' : 'expense',
+          description: item.description?.trim() || 'Giao dịch ngân hàng',
+          note: item.note?.trim() || undefined,
+          selected: true,
+        };
+      });
 
       return {
         transactions: normalizedItems,
@@ -242,13 +256,14 @@ export async function scanReceiptImage(
   } else if (lastError?.error?.message) {
     cleanMessage = String(lastError.error.message);
   }
+
   if (
     cleanMessage.includes('503') ||
     cleanMessage.includes('high demand') ||
     cleanMessage.includes('UNAVAILABLE')
   ) {
     cleanMessage =
-      'Mô hình AI hiện đang chịu tải cao (503). Vui lòng bấm "Thử lại ngay" để hệ thống chuyển sang mô hình dự phòng.';
+      'Mô hình AI hiện đang chịu tải cao (503). Vui lòng bấm "Thử lại ngay" để hệ thống chuyển sang luồng dự phòng.';
   } else if (cleanMessage.includes('404')) {
     cleanMessage =
       'Máy chủ đang trong quá trình khởi động hoặc làm nóng (404). Vui lòng bấm "Thử lại ngay".';

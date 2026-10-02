@@ -19,13 +19,14 @@ async function startServer() {
   const portArg = portArgIndex !== -1 ? Number(process.argv[portArgIndex + 1]) : null;
   const PORT = portArg || Number(process.env.DEFAULT_APP_PORT) || 3000;
 
-  // CORS and Preflight handler
+  // CORS and Preflight handler with full credentials support
   app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.header('Access-Control-Allow-Credentials', 'true');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.header(
       'Access-Control-Allow-Headers',
-      'Origin, X-Requested-With, Content-Type, Accept, Authorization'
+      'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cookie'
     );
     if (req.method === 'OPTIONS') {
       return res.sendStatus(204);
@@ -47,15 +48,15 @@ async function startServer() {
     },
   });
 
-  // Candidate models: Start with gemini-3.1-flash-lite (fastest, most available, no 503 spikes),
-  // with automatic fallback to gemini-flash-latest and gemini-3.8-flash
+  // Candidate models: gemini-3.1-flash-lite is fastest and most stable for vision OCR,
+  // followed by gemini-flash-latest and gemini-3.8-flash
   const CANDIDATE_MODELS = [
     'gemini-3.1-flash-lite',
     'gemini-flash-latest',
     'gemini-3.8-flash',
   ];
 
-  // API Route: Scan & Extract ALL Transaction Details from Image (Supports both single receipts and full transaction history lists)
+  // API Route: Check scan-receipt endpoint availability
   app.get(['/api/scan-receipt', '/api/scan-receipt/'], (_req, res) => {
     res.json({
       status: 'active',
@@ -64,6 +65,7 @@ async function startServer() {
     });
   });
 
+  // API Route: Scan & Extract ALL Transaction Details from Image
   app.post(['/api/scan-receipt', '/api/scan-receipt/'], async (req, res) => {
     try {
       const { imageBase64, mimeType } = req.body;
@@ -75,9 +77,23 @@ async function startServer() {
         });
       }
 
-      // Clean prefix if data URL format is passed (e.g. data:image/png;base64,...)
-      const cleanedBase64 = imageBase64.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
-      const validMimeType = mimeType || 'image/png';
+      // Robust extraction of pure base64 data regardless of prefix format
+      let cleanedBase64 = imageBase64;
+      if (typeof imageBase64 === 'string' && imageBase64.includes(';base64,')) {
+        cleanedBase64 = imageBase64.split(';base64,')[1];
+      } else if (typeof imageBase64 === 'string') {
+        cleanedBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
+      }
+      cleanedBase64 = cleanedBase64.replace(/\s+/g, '');
+
+      // Determine accurate MIME type
+      let validMimeType = 'image/jpeg';
+      if (typeof imageBase64 === 'string' && imageBase64.startsWith('data:image/')) {
+        const detected = imageBase64.split(';')[0].replace('data:', '').trim();
+        if (detected) validMimeType = detected;
+      } else if (mimeType && mimeType.startsWith('image/')) {
+        validMimeType = mimeType;
+      }
 
       const prompt = `Bạn là chuyên gia kế toán và trợ lý tài chính AI thông minh chuyên phân tích ảnh chụp màn hình ngân hàng tại Việt Nam (Timo, Vietcombank, MB Bank, Techcombank, ACB, BIDV, Agribank, TPBank, VPBank, MoMo, ZaloPay, v.v.).
 
@@ -94,22 +110,31 @@ LƯU Ý CỰC KỲ QUAN TRỌNG:
    - Đến LE MINH SON: -250.000
    => Bạn phải trả về đủ 5 phần tử trong mảng 'transactions'!
 
+CHÚ Ý QUY ĐỔI SỐ TIỀN THEO TIỀN TỆ VIỆT NAM (VND):
+- Dấu chấm '.' trong số tiền tiếng Việt là dấu phân cách hàng nghìn!
+  * '-29.000' có nghĩa là 29000 VND (hai mươi chín nghìn đồng, KHÔNG PHẢI 29 đồng).
+  * '-490.000' có nghĩa là 490000 VND.
+  * '-500.000' có nghĩa là 500000 VND.
+  * '-15.000' có nghĩa là 15000 VND.
+  * '-250.000' có nghĩa là 250000 VND.
+- Thuộc tính 'amount' luôn là SỐ NGUYÊN DƯƠNG (ví dụ 29000, 490000, 500000, 15000, 250000).
+
 Quy tắc phân loại từng giao dịch:
 - 'type':
   * 'income' (tiền vào) nếu có dấu '+', nhận tiền, chuyển khoản đến, lương, thưởng, hoàn tiền...
   * 'expense' (tiền ra) nếu có dấu '-', 'Đến [Tên người/cửa hàng]', thanh toán, mua sắm, rút tiền, trừ phí...
   * 'transfer' nếu là chuyển tiền nội bộ giữa các tài khoản ngân hàng hoặc chuyển tiết kiệm.
-- 'amount': Số tiền dương tính bằng VND (ví dụ 29000, 490000, 500000, 15000, 250000, bỏ dấu - hay +).
+- 'amount': Số tiền dương tính bằng VND (ví dụ 29000, 490000, 500000).
 - 'date': Ngày giao dịch (định dạng YYYY-MM-DD). Nếu trên ảnh ghi 'Hôm qua' hoặc ngày/tháng (ví dụ 27/09/2026 hoặc 23/09), hãy chuẩn hóa thành YYYY-MM-DD với năm 2026.
 - 'day': Số ngày trong tháng (1 đến 31).
 - 'description': Tên người nhận/người gửi hoặc nội dung (ví dụ: 'Đến FPT PHARMA', 'Đến TRAN HAU CAN', 'Đến NGUYEN THI THANH').
 - 'bankName': Tên ngân hàng nhận diện được từ logo/giao diện (ví dụ: Timo, Vietcombank, Techcombank, MB Bank...).
-- 'categorySuggestion': Gợi ý danh mục phù hợp nhất: 'Ăn uống', 'Mua sắm', 'Di chuyển', 'Giải trí', 'Hóa đơn & Tiện ích', 'Nhà cửa', 'Sức khỏe' (cho nhà thuốc FPT Pharma...), 'Giáo dục', 'Lương', 'Thưởng', 'Khác'.`;
+- 'categorySuggestion': Gợi ý danh mục phù hợp nhất: 'Ăn uống', 'Mua sắm & Quần áo', 'Xăng xe & Đi lại', 'Cà phê & Giải trí', 'Điện, Nước & Internet', 'Nhà ở & Tiền phòng', 'Sức khỏe & Thuốc men', 'Học tập & Sách vở', 'Hiếu hỉ & Quà tặng', 'Chi tiêu khác'.`;
 
       let responseText: string | undefined;
       let lastErrorMessage: string = '';
 
-      // Fallback chain across candidate models with retry
+      // Fallback chain across candidate models
       for (let i = 0; i < CANDIDATE_MODELS.length; i++) {
         const modelName = CANDIDATE_MODELS[i];
         try {
@@ -149,7 +174,7 @@ Quy tắc phân loại từng giao dịch:
                         },
                         amount: {
                           type: Type.NUMBER,
-                          description: 'Số tiền giao dịch (luôn là số dương)',
+                          description: 'Số tiền giao dịch bằng VND (số nguyên dương, ví dụ 29000, 490000)',
                         },
                         date: {
                           type: Type.STRING,
@@ -181,7 +206,7 @@ Quy tắc phân loại từng giao dịch:
                         categorySuggestion: {
                           type: Type.STRING,
                           description:
-                            'Gợi ý danh mục phù hợp (Ăn uống, Sức khỏe, Mua sắm, v.v.)',
+                            'Gợi ý danh mục phù hợp (Ăn uống, Sức khỏe & Thuốc men, Mua sắm & Quần áo, v.v.)',
                         },
                         rawSummary: {
                           type: Type.STRING,
@@ -214,9 +239,9 @@ Quy tắc phân loại từng giao dịch:
           lastErrorMessage = errStr;
           console.warn(`Model ${modelName} encountered error:`, lastErrorMessage);
 
-          // Small pause before trying fallback model
+          // Short delay before fallback
           if (i < CANDIDATE_MODELS.length - 1) {
-            await new Promise((resolve) => setTimeout(resolve, 600));
+            await new Promise((resolve) => setTimeout(resolve, 500));
           }
         }
       }
@@ -228,7 +253,27 @@ Quy tắc phân loại từng giao dịch:
         );
       }
 
-      const parsedData = JSON.parse(responseText);
+      // Robust JSON extraction
+      let cleanJson = responseText.trim();
+      if (cleanJson.startsWith('```')) {
+        cleanJson = cleanJson.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+      }
+      const firstBrace = cleanJson.indexOf('{');
+      const lastBrace = cleanJson.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1) {
+        cleanJson = cleanJson.substring(firstBrace, lastBrace + 1);
+      }
+
+      let parsedData: any;
+      try {
+        parsedData = JSON.parse(cleanJson);
+      } catch (jsonErr) {
+        console.error('Lỗi parse JSON từ Gemini:', jsonErr, responseText);
+        parsedData = {
+          transactions: [],
+          overallSummary: 'Đã nhận diện ảnh nhưng cần bổ sung chi tiết thủ công.',
+        };
+      }
 
       return res.json({
         success: true,

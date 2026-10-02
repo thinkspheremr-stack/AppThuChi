@@ -132,7 +132,20 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
       setOverallSummary(result.overallSummary || `Phát hiện ${result.transactions.length} giao dịch trong ảnh`);
 
       if (!result.transactions || result.transactions.length === 0) {
-        throw new Error('Không phát hiện thấy giao dịch nào trong ảnh. Bạn có thể bấm "+ Thêm giao dịch" để nhập nhanh.');
+        setScanError('Chưa phát hiện thấy giao dịch rõ ràng trong ảnh. Bạn có thể bấm "Thử Lại Ngay" hoặc tự nhập nhanh các dòng giao dịch từ ảnh bên trái.');
+        setItems([
+          {
+            id: `row-${Date.now()}-0`,
+            type: 'expense',
+            amount: 0,
+            date: new Date().toISOString().split('T')[0],
+            description: '',
+            selected: true,
+            accountId: activeAccountId || accounts[0]?.id || '',
+            categoryId: categories.find((c) => c.type === 'expense')?.id || '',
+          },
+        ]);
+        return;
       }
 
       // Map each transaction to editable row with matched bank & category
