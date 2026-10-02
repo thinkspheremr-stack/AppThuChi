@@ -15,6 +15,8 @@ import {
   Flame,
   CloudCheck,
   Cloud,
+  Save,
+  Check,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -22,6 +24,9 @@ interface NavbarProps {
   currentUser: User | null;
   lastSyncedAt: string | null;
   isSyncing: boolean;
+  isSaving?: boolean;
+  saveSuccess?: boolean;
+  onManualSave?: () => void;
   onChangeMonth: (month: string) => void;
   onOpenAddModal: (type?: 'expense' | 'income' | 'transfer') => void;
   onOpenReminderModal: () => void;
@@ -39,6 +44,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentUser,
   lastSyncedAt,
   isSyncing,
+  isSaving,
+  saveSuccess,
+  onManualSave,
   onChangeMonth,
   onOpenAddModal,
   onOpenReminderModal,
@@ -144,6 +152,40 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Right Action Tools */}
           <div className="flex items-center gap-2">
+            {/* NÚT LƯU DỮ LIỆU (THEO ĐÚNG VÙNG Ô VUÔNG ĐỎ CỦA USER) */}
+            {onManualSave && (
+              <button
+                type="button"
+                onClick={onManualSave}
+                disabled={isSaving}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-black text-xs shadow-xs transition-all ${
+                  saveSuccess
+                    ? 'bg-emerald-600 text-white shadow-emerald-500/30 ring-2 ring-emerald-300 scale-102'
+                    : isSaving
+                    ? 'bg-amber-500 text-white animate-pulse cursor-wait'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs hover:shadow-md hover:scale-102 active:scale-98'
+                }`}
+                title="Lưu tất cả dữ liệu vào máy & đồng bộ tài khoản Google ngay lập tức"
+              >
+                {saveSuccess ? (
+                  <>
+                    <Check className="w-4 h-4 text-white" />
+                    <span>Đã Lưu!</span>
+                  </>
+                ) : isSaving ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Đang lưu...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" />
+                    <span>Lưu</span>
+                  </>
+                )}
+              </button>
+            )}
+
             {/* Google Account & Cloud Sync button */}
             <button
               onClick={onOpenAuthModal}

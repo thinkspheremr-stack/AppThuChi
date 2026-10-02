@@ -9,6 +9,7 @@ const STORAGE_KEYS = {
   BUDGETS: 'so_thuchi_budgets_v1',
   LAST_ACTIVE: 'so_thuchi_last_active_v1',
   DEBTS: 'so_thuchi_debts_v1',
+  LAST_LOCAL_SAVE: 'so_thuchi_last_local_save',
 };
 
 export const getStoredAccounts = (): Account[] => {
@@ -19,17 +20,10 @@ export const getStoredAccounts = (): Account[] => {
   }
   try {
     const parsed: Account[] = JSON.parse(data);
-    // Filter to keep Vietcombank if old mock accounts exist
-    const hasOldMocks = parsed.some((a) => a.id === 'acc-tcb' || a.id === 'acc-mb');
-    if (hasOldMocks) {
-      const vcbOnly = parsed.filter(
-        (a) => a.id === 'acc-vcb' || a.name.toLowerCase().includes('vietcombank')
-      );
-      const result = vcbOnly.length > 0 ? vcbOnly : DEFAULT_ACCOUNTS;
-      localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(result));
-      return result;
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed;
     }
-    return parsed.length > 0 ? parsed : DEFAULT_ACCOUNTS;
+    return DEFAULT_ACCOUNTS;
   } catch {
     return DEFAULT_ACCOUNTS;
   }
@@ -37,31 +31,30 @@ export const getStoredAccounts = (): Account[] => {
 
 export const saveAccounts = (accounts: Account[]) => {
   localStorage.setItem(STORAGE_KEYS.ACCOUNTS, JSON.stringify(accounts));
+  localStorage.setItem(STORAGE_KEYS.LAST_LOCAL_SAVE, new Date().toISOString());
 };
 
 export const getStoredTransactions = (): Transaction[] => {
   const data = localStorage.getItem(STORAGE_KEYS.TRANSACTIONS);
-  if (!data) {
+  if (data === null) {
     const initial = generateInitialTransactions();
     localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(initial));
     return initial;
   }
   try {
     const parsed: Transaction[] = JSON.parse(data);
-    // Keep transactions belonging to remaining accounts
-    const valid = parsed.filter(
-      (t) =>
-        t.accountId === 'acc-vcb' ||
-        !['acc-tcb', 'acc-mb', 'acc-momo', 'acc-zalopay', 'acc-cash'].includes(t.accountId)
-    );
-    return valid.length > 0 ? valid : generateInitialTransactions();
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    return [];
   } catch {
-    return generateInitialTransactions();
+    return [];
   }
 };
 
 export const saveTransactions = (transactions: Transaction[]) => {
   localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(transactions));
+  localStorage.setItem(STORAGE_KEYS.LAST_LOCAL_SAVE, new Date().toISOString());
 };
 
 export const getStoredCategories = (): Category[] => {
@@ -71,7 +64,8 @@ export const getStoredCategories = (): Category[] => {
     return DEFAULT_CATEGORIES;
   }
   try {
-    return JSON.parse(data);
+    const parsed = JSON.parse(data);
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_CATEGORIES;
   } catch {
     return DEFAULT_CATEGORIES;
   }
@@ -79,6 +73,7 @@ export const getStoredCategories = (): Category[] => {
 
 export const saveCategories = (categories: Category[]) => {
   localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(categories));
+  localStorage.setItem(STORAGE_KEYS.LAST_LOCAL_SAVE, new Date().toISOString());
 };
 
 export const getStoredReminders = (): ReminderSetting[] => {
@@ -88,7 +83,8 @@ export const getStoredReminders = (): ReminderSetting[] => {
     return DEFAULT_REMINDERS;
   }
   try {
-    return JSON.parse(data);
+    const parsed = JSON.parse(data);
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_REMINDERS;
   } catch {
     return DEFAULT_REMINDERS;
   }
@@ -96,6 +92,7 @@ export const getStoredReminders = (): ReminderSetting[] => {
 
 export const saveReminders = (reminders: ReminderSetting[]) => {
   localStorage.setItem(STORAGE_KEYS.REMINDERS, JSON.stringify(reminders));
+  localStorage.setItem(STORAGE_KEYS.LAST_LOCAL_SAVE, new Date().toISOString());
 };
 
 export const getStoredDebts = (): DebtRecord[] => {
@@ -105,7 +102,8 @@ export const getStoredDebts = (): DebtRecord[] => {
     return DEFAULT_DEBTS;
   }
   try {
-    return JSON.parse(data);
+    const parsed = JSON.parse(data);
+    return Array.isArray(parsed) ? parsed : DEFAULT_DEBTS;
   } catch {
     return DEFAULT_DEBTS;
   }
@@ -113,6 +111,7 @@ export const getStoredDebts = (): DebtRecord[] => {
 
 export const saveDebts = (debts: DebtRecord[]) => {
   localStorage.setItem(STORAGE_KEYS.DEBTS, JSON.stringify(debts));
+  localStorage.setItem(STORAGE_KEYS.LAST_LOCAL_SAVE, new Date().toISOString());
 };
 
 export const getStoredBudgets = (): Record<string, MonthlyBudget> => {
@@ -127,95 +126,111 @@ export const getStoredBudgets = (): Record<string, MonthlyBudget> => {
 
 export const saveBudgets = (budgets: Record<string, MonthlyBudget>) => {
   localStorage.setItem(STORAGE_KEYS.BUDGETS, JSON.stringify(budgets));
+  localStorage.setItem(STORAGE_KEYS.LAST_LOCAL_SAVE, new Date().toISOString());
 };
 
 /**
- * Re-calculate real-time balances for all accounts based on initialBalance + all transactions
+ * Re-calculate dynamic account balances based on initial balances + all completed transactions
  */
-export const recalculateAccountBalances = (accounts: Account[], transactions: Transaction[]): Account[] => {
+export const recalculateAccountBalances = (
+  accounts: Account[],
+  transactions: Transaction[]
+): Account[] => {
   return accounts.map((acc) => {
-    let currentBalance = acc.initialBalance || 0;
+    let balance = acc.initialBalance || 0;
 
-    for (const tx of transactions) {
+    transactions.forEach((tx) => {
       if (tx.accountId === acc.id) {
-        if (tx.type === 'expense') {
-          currentBalance -= tx.amount;
-        } else if (tx.type === 'income') {
-          currentBalance += tx.amount;
-        } else if (tx.type === 'transfer') {
-          currentBalance -= tx.amount; // Sent out
+        if (tx.type === 'income') {
+          balance += tx.amount;
+        } else if (tx.type === 'expense' || tx.type === 'transfer') {
+          balance -= tx.amount;
         }
-      } else if (tx.type === 'transfer' && tx.toAccountId === acc.id) {
-        currentBalance += tx.amount; // Received
       }
-    }
+
+      if (tx.type === 'transfer' && tx.toAccountId === acc.id) {
+        balance += tx.amount;
+      }
+    });
 
     return {
       ...acc,
-      balance: currentBalance,
+      balance,
     };
   });
 };
 
 /**
- * Reset all data to initial factory defaults
+ * Reset all local storage back to clean initial state
  */
 export const resetAllData = () => {
-  localStorage.removeItem(STORAGE_KEYS.ACCOUNTS);
-  localStorage.removeItem(STORAGE_KEYS.TRANSACTIONS);
-  localStorage.removeItem(STORAGE_KEYS.CATEGORIES);
-  localStorage.removeItem(STORAGE_KEYS.REMINDERS);
-  localStorage.removeItem(STORAGE_KEYS.BUDGETS);
-  window.location.reload();
+  Object.values(STORAGE_KEYS).forEach((k) => localStorage.removeItem(k));
+  localStorage.removeItem('so_thuchi_current_month');
+  localStorage.removeItem('so_thuchi_selected_account_id');
+  localStorage.removeItem('so_thuchi_active_sheet');
+  localStorage.removeItem('so_thuchi_last_synced');
+  localStorage.removeItem(STORAGE_KEYS.LAST_LOCAL_SAVE);
 };
 
 /**
- * Export data to JSON file
+ * Export all data as JSON file for offline backup
  */
-export const exportDataAsJSON = (accounts: Account[], transactions: Transaction[], categories: Category[], reminders: ReminderSetting[]) => {
+export const exportDataAsJSON = (
+  accounts: Account[],
+  transactions: Transaction[],
+  categories: Category[],
+  reminders: ReminderSetting[],
+  debts?: DebtRecord[]
+) => {
   const data = {
+    exportedAt: new Date().toISOString(),
     version: '1.0',
-    exportDate: new Date().toISOString(),
     accounts,
     transactions,
     categories,
     reminders,
+    debts: debts || [],
   };
+
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `sothuchi_backup_${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `so-thuchi-backup-${new Date().toISOString().split('T')[0]}.json`;
   a.click();
   URL.revokeObjectURL(url);
 };
 
 /**
- * Export transactions to CSV
+ * Export filtered transactions as CSV file for Excel
  */
-export const exportTransactionsAsCSV = (transactions: Transaction[], accounts: Account[], categories: Category[]) => {
+export const exportTransactionsAsCSV = (
+  transactions: Transaction[],
+  accounts: Account[],
+  categories: Category[]
+) => {
   const accountMap = new Map(accounts.map((a) => [a.id, a.name]));
   const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
 
-  const headers = ['Mã GD', 'Ngày', 'Giờ', 'Loại', 'Số tiền (VND)', 'Tài khoản / Ngân hàng', 'Đến tài khoản', 'Danh mục', 'Ghi chú'];
+  const headers = ['Mã GD', 'Ngày', 'Giờ', 'Loại', 'Số tiền (VND)', 'Tài khoản', 'Danh mục', 'Nội dung', 'Ghi chú'];
   const rows = transactions.map((t) => [
     t.id,
     t.date,
     t.time || '',
-    t.type === 'expense' ? 'Chi tiêu' : t.type === 'income' ? 'Thu nhập' : 'Chuyển khoản',
+    t.type === 'income' ? 'Thu nhập' : t.type === 'expense' ? 'Chi tiêu' : 'Chuyển khoản',
     t.amount,
     accountMap.get(t.accountId) || t.accountId,
-    t.toAccountId ? (accountMap.get(t.toAccountId) || t.toAccountId) : '',
-    t.categoryId ? (categoryMap.get(t.categoryId) || t.categoryId) : '',
+    t.categoryId ? categoryMap.get(t.categoryId) || '' : '',
     `"${(t.description || '').replace(/"/g, '""')}"`,
+    `"${(t.note || '').replace(/"/g, '""')}"`,
   ]);
 
-  const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+  const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `giao_dich_sothuchi_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `giao-dich-${new Date().toISOString().split('T')[0]}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 };

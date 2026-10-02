@@ -11,6 +11,7 @@ import {
   recalculateAccountBalances,
   resetAllData,
   saveAccounts,
+  saveCategories,
   saveDebts,
   saveReminders,
   saveTransactions,
@@ -36,33 +37,39 @@ import { Wallet, FileText } from 'lucide-react';
 
 export default function App() {
   // Current active sheet: 'thuchi' (Sổ Thu Chi) | 'ghino' (Sổ Ghi Nợ)
-  const [activeSheet, setActiveSheet] = useState<'thuchi' | 'ghino'>('thuchi');
+  const [activeSheet, setActiveSheet] = useState<'thuchi' | 'ghino'>(() => {
+    return (localStorage.getItem('so_thuchi_active_sheet') as any) || 'thuchi';
+  });
 
-  // Current month: YYYY-MM
+  // Current month: YYYY-MM (Persisted across F5)
   const [currentMonth, setCurrentMonth] = useState<string>(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    return (
+      localStorage.getItem('so_thuchi_current_month') ||
+      `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`
+    );
   });
 
-  // Core Data
-  const [rawAccounts, setRawAccounts] = useState<Account[]>(() => {
-    const stored = getStoredAccounts();
-    const vcbOnly = stored.filter((a) => a.id === 'acc-vcb' || a.name.toLowerCase().includes('vietcombank'));
-    return vcbOnly.length > 0 ? vcbOnly : stored;
-  });
+  // Core Data (Persisted across F5)
+  const [rawAccounts, setRawAccounts] = useState<Account[]>(() => getStoredAccounts());
   const [transactions, setTransactions] = useState<Transaction[]>(() => getStoredTransactions());
   const [categories, setCategories] = useState<Category[]>(() => getStoredCategories());
   const [reminders, setReminders] = useState<ReminderSetting[]>(() => getStoredReminders());
   const [debts, setDebts] = useState<DebtRecord[]>(() => getStoredDebts());
 
-  // Filter state: filter by specific bank/wallet
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  // Filter state: filter by specific bank/wallet (Persisted across F5)
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(() => {
+    return localStorage.getItem('so_thuchi_selected_account_id') || null;
+  });
 
   // User Auth & Cloud Sync state
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(() => localStorage.getItem('so_thuchi_last_synced'));
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+
+  // Manual Save State (For the Save button requested by user)
+  const [isManualSaving, setIsManualSaving] = useState(false);
+  const [saveSuccessNotification, setSaveSuccessNotification] = useState(false);
 
   // Modals state
   const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
@@ -79,6 +86,23 @@ export default function App() {
     return recalculateAccountBalances(rawAccounts, transactions);
   }, [rawAccounts, transactions]);
 
+  // Persist current month across F5
+  useEffect(() => {
+    localStorage.setItem('so_thuchi_current_month', currentMonth);
+  }, [currentMonth]);
+
+  // Persist selected account across F5
+  useEffect(() => {
+    if (selectedAccountId) {
+      localStorage.setItem('so_thuchi_selected_account_id', selectedAccountId);
+    }
+  }, [selectedAccountId]);
+
+  // Persist active sheet across F5
+  useEffect(() => {
+    localStorage.setItem('so_thuchi_active_sheet', activeSheet);
+  }, [activeSheet]);
+
   // Persist accounts locally
   useEffect(() => {
     saveAccounts(rawAccounts);
@@ -89,38 +113,80 @@ export default function App() {
     saveTransactions(transactions);
   }, [transactions]);
 
+  // Persist categories locally
+  useEffect(() => {
+    saveCategories(categories);
+  }, [categories]);
+
   // Persist reminders locally
   useEffect(() => {
     saveReminders(reminders);
   }, [reminders]);
 
-  // Firebase Auth Listener
+  // Persist debts locally
+  useEffect(() => {
+    saveDebts(debts);
+  }, [debts]);
+
+  // Firebase Auth Listener with smart timestamp check to NEVER overwrite recent local edits on F5
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       if (user) {
-        // Try fetching cloud data on sign-in
         try {
           setIsSyncing(true);
           const cloudData = await loadDataFromCloud(user);
           if (cloudData) {
-            setLastSyncedAt(cloudData.lastSyncedAt);
-            localStorage.setItem('so_thuchi_last_synced', cloudData.lastSyncedAt);
-            if (cloudData.accounts && cloudData.accounts.length) {
-              setRawAccounts(cloudData.accounts);
-            }
-            if (cloudData.transactions) {
-              setTransactions(cloudData.transactions);
-            }
-            if (cloudData.categories && cloudData.categories.length) {
-              setCategories(cloudData.categories);
-            }
-            if (cloudData.reminders && cloudData.reminders.length) {
-              setReminders(cloudData.reminders);
+            const localSaveTime = localStorage.getItem('so_thuchi_last_local_save') || '';
+            const cloudTime = cloudData.lastSyncedAt || '';
+            const isLocalNewer =
+              localSaveTime &&
+              cloudTime &&
+              new Date(localSaveTime).getTime() > new Date(cloudTime).getTime();
+
+            if (isLocalNewer) {
+              // Local data was edited more recently! Do not overwrite local with stale cloud data.
+              // Instead, sync up the newer local data to cloud immediately.
+              const syncedTime = await backupDataToCloud(
+                user,
+                rawAccounts,
+                transactions,
+                categories,
+                reminders,
+                debts
+              );
+              setLastSyncedAt(syncedTime);
+              localStorage.setItem('so_thuchi_last_synced', syncedTime);
+            } else {
+              // Cloud data is newer or local is fresh. Safely apply cloud data.
+              setLastSyncedAt(cloudData.lastSyncedAt);
+              localStorage.setItem('so_thuchi_last_synced', cloudData.lastSyncedAt);
+              if (cloudData.accounts && cloudData.accounts.length) {
+                setRawAccounts(cloudData.accounts);
+              }
+              if (cloudData.transactions) {
+                setTransactions(cloudData.transactions);
+              }
+              if (cloudData.categories && cloudData.categories.length) {
+                setCategories(cloudData.categories);
+              }
+              if (cloudData.reminders && cloudData.reminders.length) {
+                setReminders(cloudData.reminders);
+              }
+              if (cloudData.debts && cloudData.debts.length) {
+                setDebts(cloudData.debts);
+              }
             }
           } else {
             // First time this user signs in: automatically backup current local data to cloud!
-            const syncedTime = await backupDataToCloud(user, rawAccounts, transactions, categories, reminders);
+            const syncedTime = await backupDataToCloud(
+              user,
+              rawAccounts,
+              transactions,
+              categories,
+              reminders,
+              debts
+            );
             setLastSyncedAt(syncedTime);
             localStorage.setItem('so_thuchi_last_synced', syncedTime);
           }
@@ -134,6 +200,51 @@ export default function App() {
 
     return () => unsubscribe();
   }, []);
+
+  // Manual Save All Handler (Kích hoạt khi người dùng bấm nút "Lưu" ở thanh Navbar)
+  const handleManualSaveAll = async () => {
+    setIsManualSaving(true);
+    try {
+      // 1. Lưu ngay tức thì vào LocalStorage của trình duyệt
+      saveAccounts(rawAccounts);
+      saveTransactions(transactions);
+      saveCategories(categories);
+      saveReminders(reminders);
+      saveDebts(debts);
+      localStorage.setItem('so_thuchi_current_month', currentMonth);
+      if (selectedAccountId) {
+        localStorage.setItem('so_thuchi_selected_account_id', selectedAccountId);
+      }
+      localStorage.setItem('so_thuchi_active_sheet', activeSheet);
+      const nowStr = new Date().toISOString();
+      localStorage.setItem('so_thuchi_last_local_save', nowStr);
+
+      // 2. Nếu đã đăng nhập Google / Firebase, sao lưu ngay lên Đám mây
+      if (currentUser) {
+        setIsSyncing(true);
+        const syncedTime = await backupDataToCloud(
+          currentUser,
+          rawAccounts,
+          transactions,
+          categories,
+          reminders,
+          debts
+        );
+        setLastSyncedAt(syncedTime);
+        localStorage.setItem('so_thuchi_last_synced', syncedTime);
+      }
+
+      setSaveSuccessNotification(true);
+      setTimeout(() => {
+        setSaveSuccessNotification(false);
+      }, 2500);
+    } catch (err) {
+      console.error('Lỗi khi lưu dữ liệu:', err);
+    } finally {
+      setIsManualSaving(false);
+      setIsSyncing(false);
+    }
+  };
 
   // Background Cloud Auto-Sync on data change when user is authenticated
   const triggerAutoBackup = (
@@ -434,6 +545,9 @@ export default function App() {
         currentUser={currentUser}
         lastSyncedAt={lastSyncedAt}
         isSyncing={isSyncing}
+        isSaving={isManualSaving || isSyncing}
+        saveSuccess={saveSuccessNotification}
+        onManualSave={handleManualSaveAll}
         onChangeMonth={setCurrentMonth}
         onOpenAddModal={(type) => handleOpenAddTransaction(type || 'expense')}
         onOpenReminderModal={() => setIsReminderModalOpen(true)}
@@ -445,6 +559,16 @@ export default function App() {
         streak={streak}
         loggedToday={loggedToday}
       />
+
+      {/* Floating Save Success Toast */}
+      {saveSuccessNotification && (
+        <div className="fixed top-20 right-6 z-50 animate-in fade-in slide-in-from-top-4 duration-200">
+          <div className="bg-emerald-600 text-white px-4 py-2.5 rounded-2xl shadow-xl flex items-center gap-2 border border-emerald-400 font-bold text-xs">
+            <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+            <span>Đã lưu toàn bộ dữ liệu an toàn vào máy & đồng bộ thành công!</span>
+          </div>
+        </div>
+      )}
 
       {/* Main Container */}
       <main className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 pt-5 flex-1">
