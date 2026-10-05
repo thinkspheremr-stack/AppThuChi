@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Account, Category, Transaction, TransactionType } from '../types';
 import { formatCurrency, formatFriendlyDate } from '../utils/formatters';
 import { CategoryIcon } from './CategoryIcon';
@@ -13,6 +13,7 @@ import {
   Landmark,
   X,
   FileSpreadsheet,
+  Wallet,
 } from 'lucide-react';
 
 interface TransactionListProps {
@@ -81,6 +82,53 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
     return true;
   });
+
+  // Tính số tiền còn lại (running balance) của từng tài khoản qua các giao dịch theo thứ tự thời gian
+  // Bắt đầu từ số dư ban đầu, giảm khi chi tiêu/chuyển đi và tăng khi có tiền chuyển vào/thu nhập
+  const balanceAfterMap = useMemo(() => {
+    const runningPerAccount: Record<string, number> = {};
+    accounts.forEach((acc) => {
+      runningPerAccount[acc.id] = acc.initialBalance || 0;
+    });
+
+    const allSortedAsc = [...transactions].sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date);
+      if ((a.time || '') !== (b.time || '')) return (a.time || '').localeCompare(b.time || '');
+      return (a.createdAt || 0) - (b.createdAt || 0);
+    });
+
+    const map = new Map<
+      string,
+      {
+        accountBalanceAfter: number;
+        toAccountBalanceAfter?: number;
+        totalBalanceAfter: number;
+      }
+    >();
+
+    allSortedAsc.forEach((tx) => {
+      if (tx.type === 'income') {
+        runningPerAccount[tx.accountId] = (runningPerAccount[tx.accountId] || 0) + tx.amount;
+      } else if (tx.type === 'expense') {
+        runningPerAccount[tx.accountId] = (runningPerAccount[tx.accountId] || 0) - tx.amount;
+      } else if (tx.type === 'transfer') {
+        runningPerAccount[tx.accountId] = (runningPerAccount[tx.accountId] || 0) - tx.amount;
+        if (tx.toAccountId && tx.toAccountId !== 'saving') {
+          runningPerAccount[tx.toAccountId] = (runningPerAccount[tx.toAccountId] || 0) + tx.amount;
+        }
+      }
+
+      const total = Object.values(runningPerAccount).reduce((s, v) => s + v, 0);
+
+      map.set(tx.id, {
+        accountBalanceAfter: runningPerAccount[tx.accountId] ?? 0,
+        toAccountBalanceAfter: tx.toAccountId ? runningPerAccount[tx.toAccountId] : undefined,
+        totalBalanceAfter: total,
+      });
+    });
+
+    return map;
+  }, [accounts, transactions]);
 
   // Group transactions by date (descending)
   const groupedByDate: Record<string, Transaction[]> = {};
@@ -319,80 +367,115 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                           </div>
                         </div>
 
-                        {/* Right: Amount & Actions */}
-                        <div className="flex items-center gap-3 shrink-0">
-                          <div className="text-right">
-                            {tx.type === 'transfer' && accountFilter !== 'all' ? (
-                              accountFilter === tx.toAccountId ? (
-                                <>
-                                  <div className="text-sm font-bold tracking-tight text-emerald-600">
-                                    +{formatCurrency(tx.amount)}
-                                  </div>
-                                  <div className="text-[10px] text-emerald-600 font-semibold">
-                                    Tiền nhận vào
-                                  </div>
-                                </>
-                              ) : (
-                                <>
-                                  <div className="text-sm font-bold tracking-tight text-rose-600">
-                                    -{formatCurrency(tx.amount)}
-                                  </div>
-                                  <div className="text-[10px] text-rose-600 font-semibold">
-                                    Tiền chuyển đi
-                                  </div>
-                                </>
-                              )
-                            ) : (
-                              <>
-                                <div
-                                  className={`text-sm font-bold tracking-tight ${
-                                    tx.type === 'expense'
-                                      ? 'text-rose-600'
-                                      : tx.type === 'income'
-                                      ? 'text-emerald-600'
-                                      : 'text-blue-600'
-                                  }`}
-                                >
-                                  {tx.type === 'expense'
-                                    ? `-${formatCurrency(tx.amount)}`
-                                    : tx.type === 'income'
-                                    ? `+${formatCurrency(tx.amount)}`
-                                    : formatCurrency(tx.amount)}
-                                </div>
-                                <div className="text-[10px] text-slate-400 font-medium capitalize">
-                                  {tx.type === 'expense'
-                                    ? 'Chi tiêu'
-                                    : tx.type === 'income'
-                                    ? 'Thu nhập'
-                                    : 'Chuyển khoản'}
-                                </div>
-                              </>
-                            )}
-                          </div>
+                        {/* Right: Amount & Running Balance & Actions */}
+                        {(() => {
+                          const balanceInfo = balanceAfterMap.get(tx.id);
+                          let balanceToShow = balanceInfo?.accountBalanceAfter ?? 0;
+                          let balanceAccountLabel = acc?.name || 'Tài khoản';
 
-                          {/* Actions */}
-                          <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
-                            <button
-                              type="button"
-                              onClick={() => onEditTransaction(tx)}
-                              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/70 rounded-lg transition-colors"
-                              title="Sửa giao dịch"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onDeleteTransaction(tx.id);
-                              }}
-                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                              title="Xóa giao dịch"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
+                          if (accountFilter !== 'all') {
+                            if (accountFilter === tx.toAccountId) {
+                              balanceToShow = balanceInfo?.toAccountBalanceAfter ?? 0;
+                              balanceAccountLabel = toAcc?.name || 'Tài khoản nhận';
+                            }
+                          }
+
+                          return (
+                            <div className="flex items-center gap-3 shrink-0">
+                              {/* Cột 1: Số tiền giao dịch */}
+                              <div className="text-right min-w-[100px]">
+                                {tx.type === 'transfer' && accountFilter !== 'all' ? (
+                                  accountFilter === tx.toAccountId ? (
+                                    <>
+                                      <div className="text-sm font-bold tracking-tight text-emerald-600">
+                                        +{formatCurrency(tx.amount)}
+                                      </div>
+                                      <div className="text-[10px] text-emerald-600 font-semibold">
+                                        Tiền nhận vào
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <div className="text-sm font-bold tracking-tight text-rose-600">
+                                        -{formatCurrency(tx.amount)}
+                                      </div>
+                                      <div className="text-[10px] text-rose-600 font-semibold">
+                                        Tiền chuyển đi
+                                      </div>
+                                    </>
+                                  )
+                                ) : (
+                                  <>
+                                    <div
+                                      className={`text-sm font-bold tracking-tight ${
+                                        tx.type === 'expense'
+                                          ? 'text-rose-600'
+                                          : tx.type === 'income'
+                                          ? 'text-emerald-600'
+                                          : 'text-blue-600'
+                                      }`}
+                                    >
+                                      {tx.type === 'expense'
+                                        ? `-${formatCurrency(tx.amount)}`
+                                        : tx.type === 'income'
+                                        ? `+${formatCurrency(tx.amount)}`
+                                        : formatCurrency(tx.amount)}
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 font-medium capitalize">
+                                      {tx.type === 'expense'
+                                        ? 'Chi tiêu'
+                                        : tx.type === 'income'
+                                        ? 'Thu nhập'
+                                        : 'Chuyển khoản'}
+                                    </div>
+                                  </>
+                                )}
+
+                                {/* Số tiền còn lại trên mobile */}
+                                <div className="text-[10px] font-bold text-slate-600 sm:hidden mt-0.5">
+                                  Còn lại: <span className="text-slate-900 font-black">{formatCurrency(balanceToShow)}</span>
+                                </div>
+                              </div>
+
+                              {/* Cột 2: Số tiền còn lại sau giao dịch (Hiển thị nổi bật trên máy tính / tablet) */}
+                              <div className="text-right px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200/90 shrink-0 min-w-[130px] hidden sm:block">
+                                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center justify-end gap-1">
+                                  <Wallet className="w-3 h-3 text-slate-400" />
+                                  <span>Số tiền còn lại</span>
+                                </div>
+                                <div className="text-sm font-black text-slate-900 tracking-tight">
+                                  {formatCurrency(balanceToShow)}
+                                </div>
+                                <div className="text-[10px] font-semibold text-slate-500 truncate max-w-[125px]">
+                                  {balanceAccountLabel}
+                                </div>
+                              </div>
+
+                              {/* Cột 3: Thao tác Sửa / Xóa */}
+                              <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  type="button"
+                                  onClick={() => onEditTransaction(tx)}
+                                  className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/70 rounded-lg transition-colors cursor-pointer"
+                                  title="Sửa giao dịch"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onDeleteTransaction(tx.id);
+                                  }}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                  title="Xóa giao dịch"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     );
                   })}

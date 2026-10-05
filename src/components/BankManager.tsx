@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Account, AccountType, Category, Transaction } from '../types';
 import { formatCurrency, formatFriendlyDate } from '../utils/formatters';
 import { CategoryIcon } from './CategoryIcon';
@@ -178,6 +178,40 @@ export const BankManager: React.FC<BankManagerProps> = ({
     (t) => t.toAccountId === 'saving' || t.tags?.includes('saving')
   );
   const totalSavingsThisMonth = savingsTransfersOut.reduce((sum, t) => sum + t.amount, 0);
+
+  // Tính số tiền còn lại (running balance) của tài khoản đang chọn theo thứ tự thời gian
+  // Bắt đầu từ số dư ban đầu, giảm khi chi tiêu/chuyển đi và tăng khi có thu nhập/chuyển vào
+  const bankRunningBalances = useMemo(() => {
+    if (!activeAccount) return new Map<string, number>();
+
+    const allSorted = [...transactions]
+      .filter(
+        (t) =>
+          t.accountId === activeAccountId ||
+          (t.type === 'transfer' && t.toAccountId === activeAccountId)
+      )
+      .sort((a, b) => {
+        if (a.date !== b.date) return a.date.localeCompare(b.date);
+        if ((a.time || '') !== (b.time || '')) return (a.time || '').localeCompare(b.time || '');
+        return (a.createdAt || 0) - (b.createdAt || 0);
+      });
+
+    let running = activeAccount.initialBalance || 0;
+    const map = new Map<string, number>();
+
+    allSorted.forEach((tx) => {
+      if (tx.accountId === activeAccountId) {
+        if (tx.type === 'income') running += tx.amount;
+        else if (tx.type === 'expense' || tx.type === 'transfer') running -= tx.amount;
+      }
+      if (tx.type === 'transfer' && tx.toAccountId === activeAccountId) {
+        running += tx.amount;
+      }
+      map.set(tx.id, running);
+    });
+
+    return map;
+  }, [activeAccount, activeAccountId, transactions]);
 
   // Handle Quick Add / Transfer directly from the table row
   const handleQuickSubmit = (e: React.FormEvent) => {
@@ -928,24 +962,25 @@ export const BankManager: React.FC<BankManagerProps> = ({
         </form>
 
         {/* ========================================================================= */}
-        {/* BẢNG DANH SÁCH: [ Ngày ] | [ Số tiền ] | [ Nội Dung ]                     */}
+        {/* BẢNG DANH SÁCH: [ Ngày ] | [ Số tiền ] | [ Số tiền còn lại ] | [ Nội Dung ]*/}
         {/* ========================================================================= */}
         <div className="overflow-x-auto rounded-xl border border-sky-600/40 bg-sky-950/40">
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="bg-[#bde0fe] text-sky-950 font-black text-xs border-b border-sky-400">
-                <th className="py-2.5 px-4 w-32">Ngày</th>
-                <th className="py-2.5 px-4 w-44">Số tiền</th>
+                <th className="py-2.5 px-4 w-28">Ngày</th>
+                <th className="py-2.5 px-4 w-36">Số tiền</th>
+                <th className="py-2.5 px-4 w-36 text-right">Số tiền còn lại</th>
                 <th className="py-2.5 px-4">
                   {subTab === 'chuyen' ? 'Nội Dung & Điểm Đến' : 'Nội Dung'}
                 </th>
-                <th className="py-2.5 px-3 text-right w-24">Thao tác</th>
+                <th className="py-2.5 px-3 text-right w-20">Thao tác</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-sky-800/60">
               {currentList.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="py-8 text-center text-sky-300 italic text-xs">
+                  <td colSpan={5} className="py-8 text-center text-sky-300 italic text-xs">
                     {subTab === 'chi'
                       ? `Chưa có giao dịch chi nào tại ${activeAccount?.name} trong tháng ${monthNum}.`
                       : subTab === 'thu'
@@ -995,6 +1030,11 @@ export const BankManager: React.FC<BankManagerProps> = ({
                             }
                             className="w-32 px-2 py-1 rounded bg-white text-slate-900 font-bold text-xs"
                           />
+                        </td>
+
+                        {/* Ô trống cho cột Số tiền còn lại khi đang sửa */}
+                        <td className="py-2 px-3 text-right text-slate-400 italic">
+                          -
                         </td>
 
                         {/* Edit Nội dung */}
@@ -1064,7 +1104,12 @@ export const BankManager: React.FC<BankManagerProps> = ({
                         </span>
                       </td>
 
-                      {/* Cột 3: Nội Dung */}
+                      {/* Cột 3: Số tiền còn lại sau giao dịch */}
+                      <td className="py-2.5 px-4 text-right font-black text-amber-200 whitespace-nowrap text-xs">
+                        {formatCurrency(bankRunningBalances.get(tx.id) ?? activeAccount?.balance ?? 0)}
+                      </td>
+
+                      {/* Cột 4: Nội Dung */}
                       <td className="py-2.5 px-4">
                         <div className="font-semibold text-white flex items-center gap-1.5">
                           {isSavingInThu && (
