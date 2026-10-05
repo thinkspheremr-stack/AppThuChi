@@ -269,6 +269,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
   // =========================================================================
   // 5. TÍNH NĂNG THAY ĐỔI THỨ TỰ GIAO DỊCH TRONG CÙNG 1 NGÀY (LÊN / XUỐNG / ĐẢO)
+  // Đồng bộ cả order và time để số dư dòng tiền (running balance) nhảy chính xác
   // =========================================================================
   const handleMoveTransaction = (txId: string, direction: 'up' | 'down') => {
     const targetTx = transactions.find((t) => t.id === txId);
@@ -301,17 +302,30 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     const [moved] = reordered.splice(currentIndex, 1);
     reordered.splice(targetIndex, 0, moved);
 
-    // Gán order mới cố định: 0, 1, 2...
-    const orderMap = new Map<string, number>();
+    // Lấy các mốc giờ ban đầu sắp xếp tăng dần (sớm -> muộn)
+    const sortedTimes = dayTxs
+      .map((t) => t.time || '')
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+
+    // Gán order mới cố định: 0, 1, 2... và gán mốc giờ tương ứng để diễn ra đúng trình tự
+    const updateMap = new Map<string, { order: number; time?: string }>();
     reordered.forEach((t, idx) => {
-      orderMap.set(t.id, idx);
+      const assignedTime =
+        sortedTimes.length === reordered.length ? sortedTimes[idx] : t.time;
+      updateMap.set(t.id, {
+        order: idx,
+        time: assignedTime,
+      });
     });
 
     const nextTransactions = transactions.map((t) => {
-      if (orderMap.has(t.id)) {
+      if (updateMap.has(t.id)) {
+        const info = updateMap.get(t.id)!;
         return {
           ...t,
-          order: orderMap.get(t.id),
+          order: info.order,
+          time: info.time || t.time,
         };
       }
       return t;
@@ -338,16 +352,30 @@ export const TransactionList: React.FC<TransactionListProps> = ({
       });
 
     const reversed = [...dayTxs].reverse();
-    const orderMap = new Map<string, number>();
+
+    // Lấy các mốc giờ ban đầu sắp xếp tăng dần
+    const sortedTimes = dayTxs
+      .map((t) => t.time || '')
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+
+    const updateMap = new Map<string, { order: number; time?: string }>();
     reversed.forEach((t, idx) => {
-      orderMap.set(t.id, idx);
+      const assignedTime =
+        sortedTimes.length === reversed.length ? sortedTimes[idx] : t.time;
+      updateMap.set(t.id, {
+        order: idx,
+        time: assignedTime,
+      });
     });
 
     const nextTransactions = transactions.map((t) => {
-      if (orderMap.has(t.id)) {
+      if (updateMap.has(t.id)) {
+        const info = updateMap.get(t.id)!;
         return {
           ...t,
-          order: orderMap.get(t.id),
+          order: info.order,
+          time: info.time || t.time,
         };
       }
       return t;
@@ -652,6 +680,15 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                                     balanceToShow = balanceInfo?.toAccountBalanceAfter ?? 0;
                                     balanceAccountLabel = toAcc?.name || 'Tài khoản nhận';
                                   }
+                                } else {
+                                  // Khi xem tất cả ngân hàng: nếu là chuyển khoản nhận tiền đến tài khoản này
+                                  if (tx.type === 'transfer' && tx.toAccountId) {
+                                    balanceToShow =
+                                      balanceInfo?.toAccountBalanceAfter ??
+                                      balanceInfo?.accountBalanceAfter ??
+                                      0;
+                                    balanceAccountLabel = toAcc?.name || acc?.name || 'Tài khoản nhận';
+                                  }
                                 }
 
                                 const isFirstInDay = txIndex === 0;
@@ -803,19 +840,33 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                                         {/* Số tiền còn lại trên mobile */}
                                         <div className="text-[10px] font-bold text-slate-600 sm:hidden mt-0.5">
                                           Còn lại:{' '}
-                                          <span className="text-slate-900 font-black">
+                                          <span
+                                            className={`font-black ${
+                                              balanceToShow < 0 ? 'text-rose-600' : 'text-slate-900'
+                                            }`}
+                                          >
                                             {formatCurrency(balanceToShow)}
                                           </span>
                                         </div>
                                       </div>
 
                                       {/* Cột 2: Số tiền còn lại sau giao dịch */}
-                                      <div className="text-right px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200/90 shrink-0 min-w-[130px] hidden sm:block">
+                                      <div className={`text-right px-3 py-1.5 rounded-xl border shrink-0 min-w-[130px] hidden sm:block ${
+                                        balanceToShow < 0
+                                          ? 'bg-rose-50 border-rose-200'
+                                          : 'bg-slate-50 border border-slate-200/90'
+                                      }`}>
                                         <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center justify-end gap-1">
-                                          <Wallet className="w-3 h-3 text-slate-400" />
-                                          <span>Số tiền còn lại</span>
+                                          <Wallet className={`w-3 h-3 ${balanceToShow < 0 ? 'text-rose-500' : 'text-slate-400'}`} />
+                                          <span className={balanceToShow < 0 ? 'text-rose-600 font-extrabold' : ''}>
+                                            {balanceToShow < 0 ? 'Số dư bị âm' : 'Số tiền còn lại'}
+                                          </span>
                                         </div>
-                                        <div className="text-sm font-black text-slate-900 tracking-tight">
+                                        <div
+                                          className={`text-sm font-black tracking-tight ${
+                                            balanceToShow < 0 ? 'text-rose-600' : 'text-slate-900'
+                                          }`}
+                                        >
                                           {formatCurrency(balanceToShow)}
                                         </div>
                                         <div className="text-[10px] font-semibold text-slate-500 truncate max-w-[125px]">

@@ -9,7 +9,10 @@ export const formatCurrency = (amount: number, showSign: boolean = false): strin
     maximumFractionDigits: 0,
   }).format(Math.abs(amount));
 
-  if (!showSign) return formatted;
+  if (!showSign) {
+    if (amount < 0) return `-${formatted}`;
+    return formatted;
+  }
   if (amount > 0) return `+${formatted}`;
   if (amount < 0) return `-${formatted}`;
   return formatted;
