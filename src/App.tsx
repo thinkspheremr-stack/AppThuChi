@@ -34,12 +34,17 @@ import { AuthModal } from './components/AuthModal';
 import { SalaryAllocationModal } from './components/SalaryAllocationModal';
 import { DebtManager } from './components/DebtManager';
 import { BackupRestoreModal } from './components/BackupRestoreModal';
-import { Wallet, FileText } from 'lucide-react';
+import { SavingsManager } from './components/SavingsManager';
+import { GeneralReportSheet } from './components/GeneralReportSheet';
+import { Wallet, FileText, PiggyBank, Layers } from 'lucide-react';
 
 export default function App() {
-  // Current active sheet: 'thuchi' (Sổ Thu Chi) | 'ghino' (Sổ Ghi Nợ)
-  const [activeSheet, setActiveSheet] = useState<'thuchi' | 'ghino'>(() => {
-    return (localStorage.getItem('so_thuchi_active_sheet') as any) || 'thuchi';
+  // Current active sheet: 'thuchi' | 'tietkiem' | 'tonghop' | 'ghino'
+  const [activeSheet, setActiveSheet] = useState<'thuchi' | 'tietkiem' | 'tonghop' | 'ghino'>(() => {
+    const saved = localStorage.getItem('so_thuchi_active_sheet');
+    return saved === 'thuchi' || saved === 'tietkiem' || saved === 'tonghop' || saved === 'ghino'
+      ? saved
+      : 'thuchi';
   });
 
   // Current month: YYYY-MM (Persisted across F5)
@@ -760,14 +765,14 @@ export default function App() {
       {/* Main Container */}
       <main className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 pt-5 flex-1">
         {/* ========================================================================= */}
-        {/* SHEET NAVIGATION: SỔ THU CHI & SỔ GHI NỢ                                  */}
+        {/* SHEET NAVIGATION: SỔ THU CHI | SỔ TIẾT KIỆM | TỔNG HỢP | SỔ GHI NỢ        */}
         {/* ========================================================================= */}
-        <div className="flex items-center gap-2 border-b border-slate-200/90 pb-3 mb-6">
+        <div className="flex items-center gap-2 border-b border-slate-200/90 pb-3 mb-6 overflow-x-auto">
           {/* Sheet 1: Sổ Thu Chi */}
           <button
             type="button"
             onClick={() => setActiveSheet('thuchi')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black transition-all ${
+            className={`flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl text-sm font-black transition-all shrink-0 cursor-pointer ${
               activeSheet === 'thuchi'
                 ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20 ring-2 ring-emerald-500/30 scale-102'
                 : 'bg-white text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 shadow-2xs'
@@ -777,11 +782,39 @@ export default function App() {
             <span>Sổ Thu Chi</span>
           </button>
 
-          {/* Sheet 2: Sổ Ghi Nợ */}
+          {/* Sheet 2: Sổ Tiết Kiệm */}
+          <button
+            type="button"
+            onClick={() => setActiveSheet('tietkiem')}
+            className={`flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl text-sm font-black transition-all shrink-0 cursor-pointer ${
+              activeSheet === 'tietkiem'
+                ? 'bg-teal-600 text-white shadow-md shadow-teal-600/20 ring-2 ring-teal-500/30 scale-102'
+                : 'bg-white text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 shadow-2xs'
+            }`}
+          >
+            <PiggyBank className="w-4 h-4" />
+            <span>Sổ Tiết Kiệm</span>
+          </button>
+
+          {/* Sheet 3: Bảng Tổng Hợp */}
+          <button
+            type="button"
+            onClick={() => setActiveSheet('tonghop')}
+            className={`flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl text-sm font-black transition-all shrink-0 cursor-pointer ${
+              activeSheet === 'tonghop'
+                ? 'bg-sky-600 text-white shadow-md shadow-sky-600/20 ring-2 ring-sky-500/30 scale-102'
+                : 'bg-white text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 shadow-2xs'
+            }`}
+          >
+            <Layers className="w-4 h-4" />
+            <span>Bảng Tổng Hợp</span>
+          </button>
+
+          {/* Sheet 4: Sổ Ghi Nợ */}
           <button
             type="button"
             onClick={() => setActiveSheet('ghino')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black transition-all ${
+            className={`flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl text-sm font-black transition-all shrink-0 cursor-pointer ${
               activeSheet === 'ghino'
                 ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20 ring-2 ring-indigo-500/30 scale-102'
                 : 'bg-white text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 shadow-2xs'
@@ -826,28 +859,7 @@ export default function App() {
               onDeleteTransaction={handleDeleteTransaction}
             />
 
-            {/* 2. BẢNG BÁO CÁO TỔNG HỢP DÒNG TIỀN, THU CHI & TIẾT KIỆM */}
-            <FinancialReportTable
-              accounts={accounts}
-              transactions={transactions}
-              categories={categories}
-              currentMonth={currentMonth}
-              selectedAccountId={selectedAccountId}
-              onSelectAccount={setSelectedAccountId}
-              onOpenTransfer={handleOpenTransfer}
-              onOpenSalaryAllocation={() => setIsSalaryModalOpen(true)}
-            />
-
-            {/* 3. Monthly Charts & Bank Spending Analytics */}
-            <MonthlyCharts
-              currentMonth={currentMonth}
-              transactions={transactions}
-              accounts={accounts}
-              categories={categories}
-              selectedAccountId={selectedAccountId}
-            />
-
-            {/* 4. Transactions List */}
+            {/* 2. Transactions List */}
             <TransactionList
               transactions={transactions}
               accounts={accounts}
@@ -862,7 +874,37 @@ export default function App() {
         )}
 
         {/* ========================================================================= */}
-        {/* NỘI DUNG SHEET 2: SỔ GHI NỢ (BẢNG REPORT GHI NỢ)                          */}
+        {/* NỘI DUNG SHEET 2: SỔ TIẾT KIỆM & TÍCH LŨY MỤC TIÊU                        */}
+        {/* ========================================================================= */}
+        {activeSheet === 'tietkiem' && (
+          <SavingsManager
+            accounts={accounts}
+            transactions={transactions}
+            currentMonth={currentMonth}
+            onAddTransaction={handleSaveTransaction}
+            onDeleteTransaction={handleDeleteTransaction}
+          />
+        )}
+
+        {/* ========================================================================= */}
+        {/* NỘI DUNG SHEET 3: BẢNG TỔNG HỢP (1. NĂM, 2. THÁNG, 3. BIỂU ĐỒ)            */}
+        {/* ========================================================================= */}
+        {activeSheet === 'tonghop' && (
+          <GeneralReportSheet
+            accounts={accounts}
+            transactions={transactions}
+            categories={categories}
+            currentMonth={currentMonth}
+            selectedAccountId={selectedAccountId}
+            onSelectAccount={setSelectedAccountId}
+            onChangeMonth={setCurrentMonth}
+            onOpenTransfer={handleOpenTransfer}
+            onOpenSalaryAllocation={() => setIsSalaryModalOpen(true)}
+          />
+        )}
+
+        {/* ========================================================================= */}
+        {/* NỘI DUNG SHEET 4: SỔ GHI NỢ (BẢNG REPORT GHI NỢ)                          */}
         {/* ========================================================================= */}
         {activeSheet === 'ghino' && (
           <DebtManager

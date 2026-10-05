@@ -106,3 +106,35 @@ export interface DebtAsset {
   note?: string; // Ghi chú (ví dụ: Đang gửi két sắt, Có thể bán ngay, v.v.)
   createdAt: number;
 }
+
+// ============================================================================
+// SỔ TIẾT KIỆM & TÍCH LŨY MỤC TIÊU (SAVINGS BOOK & GOALS)
+// ============================================================================
+export interface SavingDeposit {
+  id: string;
+  amount: number;
+  date: string; // YYYY-MM-DD
+  type: 'deposit' | 'withdraw'; // Nạp tiền hay Rút tiền
+  fromAccountId?: string; // Ngân hàng nguồn
+  toAccountId?: string; // Ngân hàng nhận khi rút
+  note?: string;
+  createdAt: number;
+}
+
+export interface SavingBook {
+  id: string;
+  name: string; // Ví dụ: "Quỹ khẩn cấp 6 tháng", "Tiết kiệm mua xe", "Tích lũy Timo Heo Đất"
+  targetAmount?: number; // Số tiền mục tiêu
+  currentBalance: number; // Số dư tiết kiệm hiện tại
+  bankAccountId?: string; // Ngân hàng liên kết mở sổ (Vietcombank, Timo...)
+  interestRate?: number; // Lãi suất %/năm
+  termMonths?: number; // Kỳ hạn (0 = không kỳ hạn, 1, 3, 6, 12, 24 tháng)
+  startDate: string; // Ngày gửi (YYYY-MM-DD)
+  dueDate?: string; // Ngày đáo hạn
+  color?: string;
+  icon?: string;
+  note?: string;
+  deposits?: SavingDeposit[];
+  createdAt: number;
+}
+
