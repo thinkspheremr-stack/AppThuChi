@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Account, Category, Transaction, TransactionType } from '../types';
 import { formatCurrency, formatFriendlyDate } from '../utils/formatters';
 import { CategoryIcon } from './CategoryIcon';
@@ -14,6 +14,10 @@ import {
   X,
   FileSpreadsheet,
   Wallet,
+  ChevronDown,
+  ChevronUp,
+  Calendar,
+  Layers,
 } from 'lucide-react';
 
 interface TransactionListProps {
@@ -43,48 +47,18 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   const [accountFilter, setAccountFilter] = useState<string>(selectedAccountId || 'all');
 
   // Keep local account filter in sync if parent selectedAccountId changes
-  React.useEffect(() => {
+  useEffect(() => {
     if (selectedAccountId) {
       setAccountFilter(selectedAccountId);
     }
   }, [selectedAccountId]);
 
-  const accountMap = new Map(accounts.map((a) => [a.id, a]));
-  const categoryMap = new Map(categories.map((c) => [c.id, c]));
+  const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
+  const categoryMap = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
 
-  // Filter transactions for this month + user filters
-  const filtered = transactions.filter((t) => {
-    // Month filter
-    if (!t.date.startsWith(currentMonth)) return false;
-
-    // Type filter
-    if (typeFilter !== 'all' && t.type !== typeFilter) return false;
-
-    // Account filter
-    if (accountFilter !== 'all') {
-      const matchAccount = t.accountId === accountFilter || (t.type === 'transfer' && t.toAccountId === accountFilter);
-      if (!matchAccount) return false;
-    }
-
-    // Category filter
-    if (categoryFilter !== 'all' && t.categoryId !== categoryFilter) return false;
-
-    // Search term
-    if (searchTerm.trim()) {
-      const q = searchTerm.toLowerCase();
-      const matchDesc = t.description?.toLowerCase().includes(q);
-      const matchNote = t.note?.toLowerCase().includes(q);
-      const matchAmount = String(t.amount).includes(q);
-      const cat = t.categoryId ? categoryMap.get(t.categoryId) : null;
-      const matchCat = cat?.name.toLowerCase().includes(q);
-      return matchDesc || matchNote || matchAmount || matchCat;
-    }
-
-    return true;
-  });
-
-  // Tính số tiền còn lại (running balance) của từng tài khoản qua các giao dịch theo thứ tự thời gian
-  // Bắt đầu từ số dư ban đầu, giảm khi chi tiêu/chuyển đi và tăng khi có tiền chuyển vào/thu nhập
+  // =========================================================================
+  // 1. TÍNH SỐ TIỀN CÒN LẠI (RUNNING BALANCE) TỪ ĐẦU ĐẾN CUỐI
+  // =========================================================================
   const balanceAfterMap = useMemo(() => {
     const runningPerAccount: Record<string, number> = {};
     accounts.forEach((acc) => {
@@ -130,38 +104,186 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     return map;
   }, [accounts, transactions]);
 
-  // Group transactions by date (descending)
-  const groupedByDate: Record<string, Transaction[]> = {};
-  filtered.sort((a, b) => {
-    // First sort by date desc, then by time desc
-    if (a.date !== b.date) return b.date.localeCompare(a.date);
-    return (b.time || '').localeCompare(a.time || '');
-  });
+  // =========================================================================
+  // 2. LỌC GIAO DỊCH THEO BỘ LỌC (LOẠI, TÀI KHOẢN, DANH MỤC, TỪ KHÓA)
+  // =========================================================================
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter((t) => {
+      // Type filter
+      if (typeFilter !== 'all' && t.type !== typeFilter) return false;
 
-  for (const t of filtered) {
-    if (!groupedByDate[t.date]) {
-      groupedByDate[t.date] = [];
+      // Account filter
+      if (accountFilter !== 'all') {
+        const matchAccount =
+          t.accountId === accountFilter ||
+          (t.type === 'transfer' && t.toAccountId === accountFilter);
+        if (!matchAccount) return false;
+      }
+
+      // Category filter
+      if (categoryFilter !== 'all' && t.categoryId !== categoryFilter) return false;
+
+      // Search term
+      if (searchTerm.trim()) {
+        const q = searchTerm.toLowerCase();
+        const matchDesc = t.description?.toLowerCase().includes(q);
+        const matchNote = t.note?.toLowerCase().includes(q);
+        const matchAmount = String(t.amount).includes(q);
+        const cat = t.categoryId ? categoryMap.get(t.categoryId) : null;
+        const matchCat = cat?.name.toLowerCase().includes(q);
+        return matchDesc || matchNote || matchAmount || matchCat;
+      }
+
+      return true;
+    });
+  }, [transactions, typeFilter, accountFilter, categoryFilter, searchTerm, categoryMap]);
+
+  // =========================================================================
+  // 3. NHÓM THEO THÁNG: THÁNG HIỆN TẠI & CÁC THÁNG TRƯỚC (THEO ĐÚNG HÌNH ẢNH)
+  // =========================================================================
+  const monthGroups = useMemo(() => {
+    const groups: Record<string, Transaction[]> = {};
+
+    // Luôn đảm bảo currentMonth có mặt
+    if (!groups[currentMonth]) {
+      groups[currentMonth] = [];
     }
-    groupedByDate[t.date].push(t);
-  }
 
-  const dateKeys = Object.keys(groupedByDate);
+    filteredTransactions.forEach((t) => {
+      const mKey = t.date.slice(0, 7); // YYYY-MM
+      if (!groups[mKey]) {
+        groups[mKey] = [];
+      }
+      groups[mKey].push(t);
+    });
+
+    // Sắp xếp các tháng giảm dần (mới nhất lên trước: Tháng 10, Tháng 9, Tháng 8...)
+    const sortedKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+
+    return sortedKeys.map((mKey) => {
+      const txs = groups[mKey] || [];
+      // Sắp xếp ngày giảm dần, thời gian giảm dần
+      txs.sort((a, b) => {
+        if (a.date !== b.date) return b.date.localeCompare(a.date);
+        return (b.time || '').localeCompare(a.time || '');
+      });
+
+      // Nhóm theo ngày
+      const dateGroups: Record<string, Transaction[]> = {};
+      txs.forEach((t) => {
+        if (!dateGroups[t.date]) dateGroups[t.date] = [];
+        dateGroups[t.date].push(t);
+      });
+
+      const totalExpense = txs
+        .filter((t) => t.type === 'expense')
+        .reduce((sum, t) => sum + t.amount, 0);
+
+      const totalIncome = txs
+        .filter((t) => t.type === 'income')
+        .reduce((sum, t) => sum + t.amount, 0);
+
+      const [y, m] = mKey.split('-');
+      const monthNum = parseInt(m, 10);
+      const isCurrent = mKey === currentMonth;
+
+      return {
+        monthKey: mKey,
+        year: y,
+        monthNum,
+        monthLabel: `Tháng ${monthNum}`,
+        fullLabel: `Tháng ${monthNum}/${y}`,
+        transactions: txs,
+        dateGroups,
+        dateKeys: Object.keys(dateGroups).sort((a, b) => b.localeCompare(a)),
+        totalExpense,
+        totalIncome,
+        isCurrent,
+      };
+    });
+  }, [filteredTransactions, currentMonth]);
+
+  // =========================================================================
+  // 4. TRẠNG THÁI MỞ / ĐÓNG:
+  // "tháng hiện tại --> xuất hiện"
+  // "còn tháng trước --> thì ẩn hết, khi ấn vào mới hiện ra (như hình ảnh)"
+  // =========================================================================
+  const [expandedMonths, setExpandedMonths] = useState<Record<string, boolean>>(() => ({
+    [currentMonth]: true, // Tháng hiện tại mặc định MỞ
+  }));
+
+  // Đảm bảo currentMonth luôn mở khi chuyển tháng
+  useEffect(() => {
+    setExpandedMonths((prev) => ({
+      ...prev,
+      [currentMonth]: true,
+    }));
+  }, [currentMonth]);
+
+  // Tự động mở các tháng có kết quả tìm kiếm nếu người dùng gõ tìm kiếm
+  useEffect(() => {
+    if (searchTerm.trim()) {
+      const searchExpanded: Record<string, boolean> = {};
+      monthGroups.forEach((g) => {
+        if (g.transactions.length > 0) {
+          searchExpanded[g.monthKey] = true;
+        }
+      });
+      setExpandedMonths((prev) => ({ ...prev, ...searchExpanded }));
+    }
+  }, [searchTerm, monthGroups]);
+
+  const toggleMonth = (monthKey: string) => {
+    setExpandedMonths((prev) => ({
+      ...prev,
+      [monthKey]: !prev[monthKey],
+    }));
+  };
+
+  const handleExpandAll = () => {
+    const allExp: Record<string, boolean> = {};
+    monthGroups.forEach((g) => (allExp[g.monthKey] = true));
+    setExpandedMonths(allExp);
+  };
+
+  const handleCollapseAllPast = () => {
+    setExpandedMonths({ [currentMonth]: true });
+  };
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5">
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-4 sm:p-5">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div>
           <h3 className="text-lg font-bold text-slate-800">Danh Sách Giao Dịch</h3>
           <p className="text-xs text-slate-500 mt-0.5">
-            Tìm thấy {filtered.length} giao dịch trong tháng
+            Tổng cộng {filteredTransactions.length} giao dịch qua các tháng
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
+            type="button"
+            onClick={handleExpandAll}
+            className="text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
+            title="Mở tất cả các tháng"
+          >
+            Mở tất cả
+          </button>
+
+          <button
+            type="button"
+            onClick={handleCollapseAllPast}
+            className="text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
+            title="Thu gọn các tháng trước"
+          >
+            Thu gọn tháng trước
+          </button>
+
+          <button
+            type="button"
             onClick={onExportCSV}
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-colors"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
             title="Xuất danh sách ra file Excel / CSV"
           >
             <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
@@ -239,247 +361,383 @@ export const TransactionList: React.FC<TransactionListProps> = ({
         </div>
       </div>
 
-      {/* Transaction Groups */}
-      {dateKeys.length === 0 ? (
+      {/* ========================================================================= */}
+      {/* 5. DANH SÁCH THEO THÁNG (ACCORDION THÁNG HIỆN TẠI & THÁNG TRƯỚC)          */}
+      {/* ========================================================================= */}
+      {monthGroups.length === 0 ? (
         <div className="text-center py-12 text-slate-400">
           <p className="text-sm font-medium">Không tìm thấy giao dịch nào</p>
           <p className="text-xs text-slate-400 mt-1">Thử đổi từ khóa hoặc bộ lọc ngân hàng</p>
         </div>
       ) : (
-        <div className="space-y-5">
-          {dateKeys.map((dateStr) => {
-            const dayTxs = groupedByDate[dateStr];
-            const dayExpense = dayTxs
-              .filter((t) => t.type === 'expense')
-              .reduce((s, t) => s + t.amount, 0);
-            const dayIncome = dayTxs
-              .filter((t) => t.type === 'income')
-              .reduce((s, t) => s + t.amount, 0);
+        <div className="space-y-4">
+          {monthGroups.map((group) => {
+            const isExpanded = expandedMonths[group.monthKey] ?? group.isCurrent;
 
             return (
-              <div key={dateStr} className="space-y-1.5">
-                {/* Date header */}
-                <div className="flex items-center justify-between text-xs font-semibold px-2 py-1 bg-slate-100/70 rounded-lg text-slate-600">
-                  <span>{formatFriendlyDate(dateStr)}</span>
-                  <div className="flex items-center gap-3 text-[11px]">
-                    {dayExpense > 0 && (
-                      <span className="text-rose-600 font-bold">
-                        Chi: -{formatCurrency(dayExpense)}
-                      </span>
-                    )}
-                    {dayIncome > 0 && (
-                      <span className="text-emerald-600 font-bold">
-                        Thu: +{formatCurrency(dayIncome)}
-                      </span>
+              <div
+                key={group.monthKey}
+                className={`rounded-2xl border transition-all overflow-hidden ${
+                  group.isCurrent
+                    ? 'border-amber-400/90 shadow-md ring-1 ring-amber-400/30'
+                    : 'border-slate-200 shadow-2xs hover:border-slate-300'
+                }`}
+              >
+                {/* ================================================================= */}
+                {/* THANH TIÊU ĐỀ THÁNG (NHƯ HÌNH BẢN VẼ: KHỐI THÁNG 10, THÁNG 9, 8...)*/}
+                {/* ================================================================= */}
+                <button
+                  type="button"
+                  onClick={() => toggleMonth(group.monthKey)}
+                  className={`w-full p-3.5 sm:p-4 flex items-center justify-between transition-colors text-left cursor-pointer ${
+                    group.isCurrent
+                      ? 'bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 text-white'
+                      : isExpanded
+                      ? 'bg-slate-100 text-slate-900 border-b border-slate-200'
+                      : 'bg-slate-50 hover:bg-slate-100 text-slate-800'
+                  }`}
+                >
+                  {/* Left: Tên Tháng theo dạng khối nổi bật */}
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`px-3.5 py-1.5 rounded-xl text-base sm:text-lg font-black tracking-wide shadow-xs ${
+                        group.isCurrent
+                          ? 'bg-white text-slate-950 border-2 border-amber-300'
+                          : 'bg-white text-slate-800 border border-slate-200'
+                      }`}
+                    >
+                      {group.monthLabel}
+                    </div>
+
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-xs font-bold ${
+                            group.isCurrent ? 'text-amber-100' : 'text-slate-500'
+                          }`}
+                        >
+                          {group.fullLabel}
+                        </span>
+                        {group.isCurrent && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-white/20 text-white uppercase tracking-wider">
+                            Tháng hiện tại
+                          </span>
+                        )}
+                      </div>
+                      <div
+                        className={`text-xs font-semibold mt-0.5 flex items-center gap-2 flex-wrap ${
+                          group.isCurrent ? 'text-amber-50' : 'text-slate-600'
+                        }`}
+                      >
+                        <span>{group.transactions.length} giao dịch</span>
+                        {group.transactions.length > 0 && (
+                          <>
+                            <span className="opacity-60">•</span>
+                            <span
+                              className={
+                                group.isCurrent
+                                  ? 'text-rose-100 font-bold'
+                                  : 'text-rose-600 font-bold'
+                              }
+                            >
+                              Chi: -{formatCurrency(group.totalExpense)}
+                            </span>
+                            <span className="opacity-60">•</span>
+                            <span
+                              className={
+                                group.isCurrent
+                                  ? 'text-emerald-100 font-bold'
+                                  : 'text-emerald-600 font-bold'
+                              }
+                            >
+                              Thu: +{formatCurrency(group.totalIncome)}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right: Mũi tên Dropdown lớn (Đúng như mũi tên xanh trên hình ảnh vẽ) */}
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`text-xs font-bold hidden sm:inline ${
+                        group.isCurrent ? 'text-amber-100' : 'text-slate-400'
+                      }`}
+                    >
+                      {isExpanded ? 'Thu gọn' : 'Bấm để xem'}
+                    </span>
+                    <div
+                      className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold transition-transform duration-200 shadow-2xs ${
+                        group.isCurrent
+                          ? 'bg-white/20 text-white hover:bg-white/30'
+                          : 'bg-white text-emerald-700 border border-slate-200 hover:bg-slate-50'
+                      } ${isExpanded ? 'rotate-180' : ''}`}
+                    >
+                      <ChevronDown className="w-5 h-5 stroke-[2.5]" />
+                    </div>
+                  </div>
+                </button>
+
+                {/* ================================================================= */}
+                {/* NỘI DUNG GIAO DỊCH TRONG THÁNG (KHI EXPANDED THÌ HIỆN RA)         */}
+                {/* ================================================================= */}
+                {isExpanded && (
+                  <div className="p-3 sm:p-4 bg-white space-y-4 animate-in fade-in duration-150">
+                    {group.dateKeys.length === 0 ? (
+                      <div className="text-center py-8 text-slate-400 text-xs italic">
+                        Chưa có giao dịch nào trong {group.fullLabel.toLowerCase()}.
+                      </div>
+                    ) : (
+                      group.dateKeys.map((dateStr) => {
+                        const dayTxs = group.dateGroups[dateStr];
+                        const dayExpense = dayTxs
+                          .filter((t) => t.type === 'expense')
+                          .reduce((s, t) => s + t.amount, 0);
+                        const dayIncome = dayTxs
+                          .filter((t) => t.type === 'income')
+                          .reduce((s, t) => s + t.amount, 0);
+
+                        return (
+                          <div key={dateStr} className="space-y-1.5">
+                            {/* Date header */}
+                            <div className="flex items-center justify-between text-xs font-semibold px-2 py-1 bg-slate-100/70 rounded-lg text-slate-600">
+                              <span>{formatFriendlyDate(dateStr)}</span>
+                              <div className="flex items-center gap-3 text-[11px]">
+                                {dayExpense > 0 && (
+                                  <span className="text-rose-600 font-bold">
+                                    Chi: -{formatCurrency(dayExpense)}
+                                  </span>
+                                )}
+                                {dayIncome > 0 && (
+                                  <span className="text-emerald-600 font-bold">
+                                    Thu: +{formatCurrency(dayIncome)}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Day Items */}
+                            <div className="divide-y divide-slate-100">
+                              {dayTxs.map((tx) => {
+                                const acc = accountMap.get(tx.accountId);
+                                const toAcc = tx.toAccountId
+                                  ? accountMap.get(tx.toAccountId)
+                                  : null;
+                                const cat = tx.categoryId
+                                  ? categoryMap.get(tx.categoryId)
+                                  : null;
+
+                                const balanceInfo = balanceAfterMap.get(tx.id);
+                                let balanceToShow = balanceInfo?.accountBalanceAfter ?? 0;
+                                let balanceAccountLabel = acc?.name || 'Tài khoản';
+
+                                if (accountFilter !== 'all') {
+                                  if (accountFilter === tx.toAccountId) {
+                                    balanceToShow = balanceInfo?.toAccountBalanceAfter ?? 0;
+                                    balanceAccountLabel = toAcc?.name || 'Tài khoản nhận';
+                                  }
+                                }
+
+                                return (
+                                  <div
+                                    key={tx.id}
+                                    className="group flex items-center justify-between py-3 px-2 rounded-xl hover:bg-slate-50 transition-colors"
+                                  >
+                                    {/* Left: Icon & Description & Bank Badge */}
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      {/* Icon */}
+                                      <div
+                                        className="w-10 h-10 rounded-xl flex items-center justify-center text-white shrink-0 shadow-2xs"
+                                        style={{
+                                          backgroundColor:
+                                            tx.type === 'transfer'
+                                              ? '#2563EB'
+                                              : cat?.color ||
+                                                (tx.type === 'income' ? '#10B981' : '#F97316'),
+                                        }}
+                                      >
+                                        {tx.type === 'transfer' ? (
+                                          <ArrowRightLeft className="w-5 h-5" />
+                                        ) : (
+                                          <CategoryIcon
+                                            name={cat?.icon || 'HelpCircle'}
+                                            className="w-5 h-5"
+                                          />
+                                        )}
+                                      </div>
+
+                                      {/* Details */}
+                                      <div className="min-w-0">
+                                        <div className="font-semibold text-sm text-slate-800 truncate">
+                                          {tx.description}
+                                        </div>
+                                        <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500 mt-0.5">
+                                          {/* Bank badge */}
+                                          {tx.type === 'transfer' ? (
+                                            <>
+                                              {accountFilter !== 'all' ? (
+                                                accountFilter === tx.toAccountId ? (
+                                                  <span className="inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                                    <span>
+                                                      Thu: Nhận từ {acc?.name || 'Ngân hàng khác'}
+                                                    </span>
+                                                  </span>
+                                                ) : (
+                                                  <span className="inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200">
+                                                    <span>
+                                                      Chi: Chuyển sang{' '}
+                                                      {toAcc?.name || 'Ngân hàng khác'}
+                                                    </span>
+                                                  </span>
+                                                )
+                                              ) : (
+                                                <span className="inline-flex items-center gap-1 font-semibold px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                                                  <span>{acc?.name || 'Nguồn'}</span>
+                                                  <span>→</span>
+                                                  <span>{toAcc?.name || 'Đích'}</span>
+                                                </span>
+                                              )}
+                                            </>
+                                          ) : (
+                                            <span
+                                              className="inline-flex items-center gap-1 font-medium px-2 py-0.5 rounded text-[11px]"
+                                              style={{
+                                                backgroundColor: `${acc?.color || '#006533'}15`,
+                                                color: acc?.color || '#006533',
+                                              }}
+                                            >
+                                              <Landmark className="w-3 h-3" />
+                                              {acc?.name || 'Tài khoản'}
+                                            </span>
+                                          )}
+
+                                          {cat && (
+                                            <span className="text-slate-400 font-medium">
+                                              • {cat.name}
+                                            </span>
+                                          )}
+
+                                          {tx.time && (
+                                            <span className="text-slate-400">• {tx.time}</span>
+                                          )}
+
+                                          {tx.note && (
+                                            <span className="text-slate-400 italic truncate max-w-xs">
+                                              • &quot;{tx.note}&quot;
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Right: Amount & Running Balance & Actions */}
+                                    <div className="flex items-center gap-3 shrink-0">
+                                      {/* Cột 1: Số tiền giao dịch */}
+                                      <div className="text-right min-w-[100px]">
+                                        {tx.type === 'transfer' && accountFilter !== 'all' ? (
+                                          accountFilter === tx.toAccountId ? (
+                                            <>
+                                              <div className="text-sm font-bold tracking-tight text-emerald-600">
+                                                +{formatCurrency(tx.amount)}
+                                              </div>
+                                              <div className="text-[10px] text-emerald-600 font-semibold">
+                                                Tiền nhận vào
+                                              </div>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <div className="text-sm font-bold tracking-tight text-rose-600">
+                                                -{formatCurrency(tx.amount)}
+                                              </div>
+                                              <div className="text-[10px] text-rose-600 font-semibold">
+                                                Tiền chuyển đi
+                                              </div>
+                                            </>
+                                          )
+                                        ) : (
+                                          <>
+                                            <div
+                                              className={`text-sm font-bold tracking-tight ${
+                                                tx.type === 'expense'
+                                                  ? 'text-rose-600'
+                                                  : tx.type === 'income'
+                                                  ? 'text-emerald-600'
+                                                  : 'text-blue-600'
+                                              }`}
+                                            >
+                                              {tx.type === 'expense'
+                                                ? `-${formatCurrency(tx.amount)}`
+                                                : tx.type === 'income'
+                                                ? `+${formatCurrency(tx.amount)}`
+                                                : formatCurrency(tx.amount)}
+                                            </div>
+                                            <div className="text-[10px] text-slate-400 font-medium capitalize">
+                                              {tx.type === 'expense'
+                                                ? 'Chi tiêu'
+                                                : tx.type === 'income'
+                                                ? 'Thu nhập'
+                                                : 'Chuyển khoản'}
+                                            </div>
+                                          </>
+                                        )}
+
+                                        {/* Số tiền còn lại trên mobile */}
+                                        <div className="text-[10px] font-bold text-slate-600 sm:hidden mt-0.5">
+                                          Còn lại:{' '}
+                                          <span className="text-slate-900 font-black">
+                                            {formatCurrency(balanceToShow)}
+                                          </span>
+                                        </div>
+                                      </div>
+
+                                      {/* Cột 2: Số tiền còn lại sau giao dịch */}
+                                      <div className="text-right px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200/90 shrink-0 min-w-[130px] hidden sm:block">
+                                        <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center justify-end gap-1">
+                                          <Wallet className="w-3 h-3 text-slate-400" />
+                                          <span>Số tiền còn lại</span>
+                                        </div>
+                                        <div className="text-sm font-black text-slate-900 tracking-tight">
+                                          {formatCurrency(balanceToShow)}
+                                        </div>
+                                        <div className="text-[10px] font-semibold text-slate-500 truncate max-w-[125px]">
+                                          {balanceAccountLabel}
+                                        </div>
+                                      </div>
+
+                                      {/* Cột 3: Thao tác Sửa / Xóa */}
+                                      <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
+                                        <button
+                                          type="button"
+                                          onClick={() => onEditTransaction(tx)}
+                                          className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/70 rounded-lg transition-colors cursor-pointer"
+                                          title="Sửa giao dịch"
+                                        >
+                                          <Edit3 className="w-3.5 h-3.5" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            onDeleteTransaction(tx.id);
+                                          }}
+                                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                          title="Xóa giao dịch"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })
                     )}
                   </div>
-                </div>
-
-                {/* Day Items */}
-                <div className="divide-y divide-slate-100">
-                  {dayTxs.map((tx) => {
-                    const acc = accountMap.get(tx.accountId);
-                    const toAcc = tx.toAccountId ? accountMap.get(tx.toAccountId) : null;
-                    const cat = tx.categoryId ? categoryMap.get(tx.categoryId) : null;
-
-                    return (
-                      <div
-                        key={tx.id}
-                        className="group flex items-center justify-between py-3 px-2 rounded-xl hover:bg-slate-50 transition-colors"
-                      >
-                        {/* Left: Icon & Description & Bank Badge */}
-                        <div className="flex items-center gap-3 min-w-0">
-                          {/* Icon */}
-                          <div
-                            className="w-10 h-10 rounded-xl flex items-center justify-center text-white shrink-0 shadow-2xs"
-                            style={{
-                              backgroundColor:
-                                tx.type === 'transfer'
-                                  ? '#2563EB'
-                                  : cat?.color || (tx.type === 'income' ? '#10B981' : '#F97316'),
-                            }}
-                          >
-                            {tx.type === 'transfer' ? (
-                              <ArrowRightLeft className="w-5 h-5" />
-                            ) : (
-                              <CategoryIcon name={cat?.icon || 'HelpCircle'} className="w-5 h-5" />
-                            )}
-                          </div>
-
-                          {/* Details */}
-                          <div className="min-w-0">
-                            <div className="font-semibold text-sm text-slate-800 truncate">
-                              {tx.description}
-                            </div>
-                            <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500 mt-0.5">
-                              {/* Bank badge */}
-                              {tx.type === 'transfer' ? (
-                                <>
-                                  {accountFilter !== 'all' ? (
-                                    accountFilter === tx.toAccountId ? (
-                                      <span className="inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                        <span>Thu: Nhận từ {acc?.name || 'Ngân hàng khác'}</span>
-                                      </span>
-                                    ) : (
-                                      <span className="inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200">
-                                        <span>Chi: Chuyển sang {toAcc?.name || 'Ngân hàng khác'}</span>
-                                      </span>
-                                    )
-                                  ) : (
-                                    <span className="inline-flex items-center gap-1 font-semibold px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
-                                      <span>{acc?.name || 'Nguồn'}</span>
-                                      <span>→</span>
-                                      <span>{toAcc?.name || 'Đích'}</span>
-                                    </span>
-                                  )}
-                                </>
-                              ) : (
-                                <span
-                                  className="inline-flex items-center gap-1 font-medium px-2 py-0.5 rounded text-[11px]"
-                                  style={{
-                                    backgroundColor: `${acc?.color || '#006533'}15`,
-                                    color: acc?.color || '#006533',
-                                  }}
-                                >
-                                  <Landmark className="w-3 h-3" />
-                                  {acc?.name || 'Tài khoản'}
-                                </span>
-                              )}
-
-                              {cat && (
-                                <span className="text-slate-400 font-medium">
-                                  • {cat.name}
-                                </span>
-                              )}
-
-                              {tx.time && (
-                                <span className="text-slate-400">
-                                  • {tx.time}
-                                </span>
-                              )}
-
-                              {tx.note && (
-                                <span className="text-slate-400 italic truncate max-w-xs">
-                                  • &quot;{tx.note}&quot;
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Right: Amount & Running Balance & Actions */}
-                        {(() => {
-                          const balanceInfo = balanceAfterMap.get(tx.id);
-                          let balanceToShow = balanceInfo?.accountBalanceAfter ?? 0;
-                          let balanceAccountLabel = acc?.name || 'Tài khoản';
-
-                          if (accountFilter !== 'all') {
-                            if (accountFilter === tx.toAccountId) {
-                              balanceToShow = balanceInfo?.toAccountBalanceAfter ?? 0;
-                              balanceAccountLabel = toAcc?.name || 'Tài khoản nhận';
-                            }
-                          }
-
-                          return (
-                            <div className="flex items-center gap-3 shrink-0">
-                              {/* Cột 1: Số tiền giao dịch */}
-                              <div className="text-right min-w-[100px]">
-                                {tx.type === 'transfer' && accountFilter !== 'all' ? (
-                                  accountFilter === tx.toAccountId ? (
-                                    <>
-                                      <div className="text-sm font-bold tracking-tight text-emerald-600">
-                                        +{formatCurrency(tx.amount)}
-                                      </div>
-                                      <div className="text-[10px] text-emerald-600 font-semibold">
-                                        Tiền nhận vào
-                                      </div>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <div className="text-sm font-bold tracking-tight text-rose-600">
-                                        -{formatCurrency(tx.amount)}
-                                      </div>
-                                      <div className="text-[10px] text-rose-600 font-semibold">
-                                        Tiền chuyển đi
-                                      </div>
-                                    </>
-                                  )
-                                ) : (
-                                  <>
-                                    <div
-                                      className={`text-sm font-bold tracking-tight ${
-                                        tx.type === 'expense'
-                                          ? 'text-rose-600'
-                                          : tx.type === 'income'
-                                          ? 'text-emerald-600'
-                                          : 'text-blue-600'
-                                      }`}
-                                    >
-                                      {tx.type === 'expense'
-                                        ? `-${formatCurrency(tx.amount)}`
-                                        : tx.type === 'income'
-                                        ? `+${formatCurrency(tx.amount)}`
-                                        : formatCurrency(tx.amount)}
-                                    </div>
-                                    <div className="text-[10px] text-slate-400 font-medium capitalize">
-                                      {tx.type === 'expense'
-                                        ? 'Chi tiêu'
-                                        : tx.type === 'income'
-                                        ? 'Thu nhập'
-                                        : 'Chuyển khoản'}
-                                    </div>
-                                  </>
-                                )}
-
-                                {/* Số tiền còn lại trên mobile */}
-                                <div className="text-[10px] font-bold text-slate-600 sm:hidden mt-0.5">
-                                  Còn lại: <span className="text-slate-900 font-black">{formatCurrency(balanceToShow)}</span>
-                                </div>
-                              </div>
-
-                              {/* Cột 2: Số tiền còn lại sau giao dịch (Hiển thị nổi bật trên máy tính / tablet) */}
-                              <div className="text-right px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200/90 shrink-0 min-w-[130px] hidden sm:block">
-                                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center justify-end gap-1">
-                                  <Wallet className="w-3 h-3 text-slate-400" />
-                                  <span>Số tiền còn lại</span>
-                                </div>
-                                <div className="text-sm font-black text-slate-900 tracking-tight">
-                                  {formatCurrency(balanceToShow)}
-                                </div>
-                                <div className="text-[10px] font-semibold text-slate-500 truncate max-w-[125px]">
-                                  {balanceAccountLabel}
-                                </div>
-                              </div>
-
-                              {/* Cột 3: Thao tác Sửa / Xóa */}
-                              <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
-                                <button
-                                  type="button"
-                                  onClick={() => onEditTransaction(tx)}
-                                  className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/70 rounded-lg transition-colors cursor-pointer"
-                                  title="Sửa giao dịch"
-                                >
-                                  <Edit3 className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onDeleteTransaction(tx.id);
-                                  }}
-                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                                  title="Xóa giao dịch"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    );
-                  })}
-                </div>
+                )}
               </div>
             );
           })}
