@@ -17,6 +17,7 @@ import {
   Cloud,
   Save,
   Check,
+  ShieldCheck,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -26,7 +27,10 @@ interface NavbarProps {
   isSyncing: boolean;
   isSaving?: boolean;
   saveSuccess?: boolean;
+  isAutoSaving?: boolean;
+  lastAutoSavedAt?: string | null;
   onManualSave?: () => void;
+  onOpenBackupModal: () => void;
   onChangeMonth: (month: string) => void;
   onOpenAddModal: (type?: 'expense' | 'income' | 'transfer') => void;
   onOpenReminderModal: () => void;
@@ -46,7 +50,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   isSyncing,
   isSaving,
   saveSuccess,
+  isAutoSaving,
+  lastAutoSavedAt,
   onManualSave,
+  onOpenBackupModal,
   onChangeMonth,
   onOpenAddModal,
   onOpenReminderModal,
@@ -152,38 +159,73 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Right Action Tools */}
           <div className="flex items-center gap-2">
-            {/* NÚT LƯU DỮ LIỆU (THEO ĐÚNG VÙNG Ô VUÔNG ĐỎ CỦA USER) */}
+            {/* 1. NÚT SAO LƯU & PHỤC HỒI (THEO ĐÚNG ẢNH USER) */}
+            <button
+              type="button"
+              onClick={onOpenBackupModal}
+              className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl font-bold text-xs border border-teal-500/50 bg-[#0d1627] hover:bg-[#132238] text-teal-300 hover:text-teal-200 shadow-xs hover:border-teal-400 transition-all cursor-pointer active:scale-98"
+              title="Mở bảng Sao lưu & Khôi phục toàn bộ (.json, Google Drive)"
+            >
+              <ShieldCheck className="w-4 h-4 text-teal-400 shrink-0" />
+              <span>Sao lưu & Phục hồi</span>
+            </button>
+
+            {/* 2. NÚT LƯU BIỂU CHI TIẾT (THEO ĐÚNG ẢNH USER) */}
             {onManualSave && (
-              <button
-                type="button"
-                onClick={onManualSave}
-                disabled={isSaving}
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-black text-xs shadow-xs transition-all ${
-                  saveSuccess
-                    ? 'bg-emerald-600 text-white shadow-emerald-500/30 ring-2 ring-emerald-300 scale-102'
-                    : isSaving
-                    ? 'bg-amber-500 text-white animate-pulse cursor-wait'
-                    : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs hover:shadow-md hover:scale-102 active:scale-98'
-                }`}
-                title="Lưu tất cả dữ liệu vào máy & đồng bộ tài khoản Google ngay lập tức"
-              >
-                {saveSuccess ? (
-                  <>
-                    <Check className="w-4 h-4 text-white" />
-                    <span>Đã Lưu!</span>
-                  </>
-                ) : isSaving ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Đang lưu...</span>
-                  </>
-                ) : (
-                  <>
-                    <Save className="w-4 h-4" />
-                    <span>Lưu</span>
-                  </>
-                )}
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={onManualSave}
+                  disabled={isSaving || isAutoSaving}
+                  className={`flex items-center gap-2 px-3.5 sm:px-4 py-1.5 rounded-xl font-black text-xs shadow-xs transition-all cursor-pointer ${
+                    saveSuccess
+                      ? 'bg-emerald-600 text-white shadow-emerald-500/30 ring-2 ring-emerald-300 scale-102'
+                      : isSaving || isAutoSaving
+                      ? 'bg-amber-500 text-white animate-pulse cursor-wait'
+                      : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs hover:shadow-md hover:scale-102 active:scale-98'
+                  }`}
+                  title="Lưu tất cả dữ liệu vào máy & đồng bộ ngay lập tức"
+                >
+                  {saveSuccess ? (
+                    <>
+                      <Check className="w-4 h-4 text-white" />
+                      <span>Đã Lưu!</span>
+                    </>
+                  ) : isSaving || isAutoSaving ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>{isAutoSaving ? 'Tự động lưu...' : 'Đang lưu...'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4" />
+                      <span>Lưu biểu chi tiết</span>
+                    </>
+                  )}
+                </button>
+
+                {/* Tag trạng thái Tự động lưu 1 phút */}
+                <div
+                  className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50/90 border border-emerald-200/90 text-[11px] font-semibold text-emerald-800"
+                  title="Hệ thống tự động lưu biểu chi tiết định kỳ mỗi 1 phút"
+                >
+                  <span className="relative flex h-2 w-2">
+                    <span
+                      className={`absolute inline-flex h-full w-full rounded-full bg-emerald-400 ${
+                        isAutoSaving ? 'animate-ping opacity-100' : 'opacity-60'
+                      }`}
+                    ></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-600"></span>
+                  </span>
+                  <span>
+                    {isAutoSaving
+                      ? 'Đang lưu...'
+                      : lastAutoSavedAt
+                      ? `Tự lưu: ${lastAutoSavedAt}`
+                      : 'Tự động lưu: 1p'}
+                  </span>
+                </div>
+              </div>
             )}
 
             {/* Google Account & Cloud Sync button */}

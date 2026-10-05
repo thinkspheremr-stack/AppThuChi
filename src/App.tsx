@@ -33,6 +33,7 @@ import { ReminderModal } from './components/ReminderModal';
 import { AuthModal } from './components/AuthModal';
 import { SalaryAllocationModal } from './components/SalaryAllocationModal';
 import { DebtManager } from './components/DebtManager';
+import { BackupRestoreModal } from './components/BackupRestoreModal';
 import { Wallet, FileText } from 'lucide-react';
 
 export default function App() {
@@ -71,7 +72,23 @@ export default function App() {
   const [isManualSaving, setIsManualSaving] = useState(false);
   const [saveSuccessNotification, setSaveSuccessNotification] = useState(false);
 
+  // Auto-Save State (Tự động lưu biểu chi tiết sau mỗi 1 phút)
+  const [isAutoSaving, setIsAutoSaving] = useState(false);
+  const [lastAutoSavedAt, setLastAutoSavedAt] = useState<string | null>(() => {
+    const last = localStorage.getItem('so_thuchi_last_local_save');
+    if (!last) return null;
+    try {
+      const d = new Date(last);
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    } catch {
+      return null;
+    }
+  });
+  const [autoSaveToast, setAutoSaveToast] = useState<string | null>(null);
+
   // Modals state
+  const [isBackupRestoreModalOpen, setIsBackupRestoreModalOpen] = useState(false);
   const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
   const [transactionModalType, setTransactionModalType] = useState<TransactionType>('expense');
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
@@ -190,8 +207,17 @@ export default function App() {
             setLastSyncedAt(syncedTime);
             localStorage.setItem('so_thuchi_last_synced', syncedTime);
           }
-        } catch (err) {
-          console.error('Error syncing cloud on login:', err);
+        } catch (err: any) {
+          const errMsg = err?.message || String(err);
+          if (
+            errMsg.includes('offline') ||
+            errMsg.includes('unavailable') ||
+            errMsg.includes('PERMISSION_DENIED')
+          ) {
+            console.warn('Đang làm việc ngoại tuyến (Offline mode). Dữ liệu được bảo toàn an toàn trên máy tính.');
+          } else {
+            console.warn('Thông báo đồng bộ tài khoản:', errMsg);
+          }
         } finally {
           setIsSyncing(false);
         }
@@ -238,13 +264,106 @@ export default function App() {
       setTimeout(() => {
         setSaveSuccessNotification(false);
       }, 2500);
-    } catch (err) {
-      console.error('Lỗi khi lưu dữ liệu:', err);
+    } catch (err: any) {
+      console.warn('Thông báo khi lưu dữ liệu:', err?.message || err);
     } finally {
       setIsManualSaving(false);
       setIsSyncing(false);
     }
   };
+
+  // Giữ tham chiếu mới nhất của toàn bộ dữ liệu để bộ hẹn giờ 1 phút luôn lưu đúng số liệu mới nhất
+  const latestDataRef = useRef({
+    rawAccounts,
+    transactions,
+    categories,
+    reminders,
+    debts,
+    currentMonth,
+    selectedAccountId,
+    activeSheet,
+    currentUser,
+  });
+
+  useEffect(() => {
+    latestDataRef.current = {
+      rawAccounts,
+      transactions,
+      categories,
+      reminders,
+      debts,
+      currentMonth,
+      selectedAccountId,
+      activeSheet,
+      currentUser,
+    };
+  }, [
+    rawAccounts,
+    transactions,
+    categories,
+    reminders,
+    debts,
+    currentMonth,
+    selectedAccountId,
+    activeSheet,
+    currentUser,
+  ]);
+
+  // Bộ hẹn giờ: TỰ ĐỘNG LƯU BIỂU CHI TIẾT ĐỊNH KỲ MỖI 1 PHÚT (60.000ms)
+  useEffect(() => {
+    const autoSaveInterval = setInterval(async () => {
+      const {
+        rawAccounts: accs,
+        transactions: txs,
+        categories: cats,
+        reminders: rems,
+        debts: dbs,
+        currentMonth: month,
+        selectedAccountId: accId,
+        activeSheet: sheet,
+        currentUser: user,
+      } = latestDataRef.current;
+
+      try {
+        setIsAutoSaving(true);
+        // 1. Lưu tức thời toàn bộ dữ liệu vào LocalStorage của máy
+        saveAccounts(accs);
+        saveTransactions(txs);
+        saveCategories(cats);
+        saveReminders(rems);
+        saveDebts(dbs);
+        localStorage.setItem('so_thuchi_current_month', month);
+        if (accId) {
+          localStorage.setItem('so_thuchi_selected_account_id', accId);
+        }
+        localStorage.setItem('so_thuchi_active_sheet', sheet);
+        const now = new Date();
+        const nowStr = now.toISOString();
+        localStorage.setItem('so_thuchi_last_local_save', nowStr);
+
+        // 2. Đồng bộ lên đám mây nếu người dùng đã đăng nhập Google
+        if (user) {
+          const syncedTime = await backupDataToCloud(user, accs, txs, cats, rems, dbs);
+          setLastSyncedAt(syncedTime);
+          localStorage.setItem('so_thuchi_last_synced', syncedTime);
+        }
+
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const timeFormatted = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+        setLastAutoSavedAt(`${pad(now.getHours())}:${pad(now.getMinutes())}`);
+        setAutoSaveToast(`Đã tự động lưu biểu chi tiết lúc ${timeFormatted}`);
+        setTimeout(() => {
+          setAutoSaveToast(null);
+        }, 2500);
+      } catch (err: any) {
+        console.warn('Lỗi khi tự động lưu biểu chi tiết (1 phút):', err?.message || err);
+      } finally {
+        setIsAutoSaving(false);
+      }
+    }, 60000); // 1 phút = 60,000ms
+
+    return () => clearInterval(autoSaveInterval);
+  }, []);
 
   // Background Cloud Auto-Sync on data change when user is authenticated
   const triggerAutoBackup = (
@@ -268,8 +387,8 @@ export default function App() {
         );
         setLastSyncedAt(syncedTime);
         localStorage.setItem('so_thuchi_last_synced', syncedTime);
-      } catch (err) {
-        console.error('Auto backup failed:', err);
+      } catch (err: any) {
+        console.warn('Auto backup notification:', err?.message || err);
       } finally {
         setIsSyncing(false);
       }
@@ -537,6 +656,58 @@ export default function App() {
     e.target.value = '';
   };
 
+  // Áp dụng dữ liệu từ file sao lưu toàn bộ
+  const handleApplyBackupPayload = (payload: any) => {
+    if (!payload || typeof payload !== 'object') return;
+
+    if (Array.isArray(payload.accounts) && payload.accounts.length > 0) {
+      setRawAccounts(payload.accounts);
+      saveAccounts(payload.accounts);
+    }
+    if (Array.isArray(payload.transactions)) {
+      setTransactions(payload.transactions);
+      saveTransactions(payload.transactions);
+    }
+    if (Array.isArray(payload.categories) && payload.categories.length > 0) {
+      setCategories(payload.categories);
+      saveCategories(payload.categories);
+    }
+    if (Array.isArray(payload.reminders) && payload.reminders.length > 0) {
+      setReminders(payload.reminders);
+      saveReminders(payload.reminders);
+    }
+    if (Array.isArray(payload.debts)) {
+      setDebts(payload.debts);
+      saveDebts(payload.debts);
+    }
+    if (payload.currentMonth) {
+      setCurrentMonth(payload.currentMonth);
+      localStorage.setItem('so_thuchi_current_month', payload.currentMonth);
+    }
+
+    const nowStr = new Date().toISOString();
+    localStorage.setItem('so_thuchi_last_local_save', nowStr);
+    setSaveSuccessNotification(true);
+    setTimeout(() => setSaveSuccessNotification(false), 3000);
+
+    // Đồng bộ lên đám mây nếu đã đăng nhập
+    if (currentUser) {
+      backupDataToCloud(
+        currentUser,
+        payload.accounts || rawAccounts,
+        payload.transactions || transactions,
+        payload.categories || categories,
+        payload.reminders || reminders,
+        payload.debts || debts
+      )
+        .then((syncedTime) => {
+          setLastSyncedAt(syncedTime);
+          localStorage.setItem('so_thuchi_last_synced', syncedTime);
+        })
+        .catch((e) => console.warn('Cloud sync offline:', e?.message || e));
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans pb-16">
       {/* Navbar */}
@@ -547,7 +718,10 @@ export default function App() {
         isSyncing={isSyncing}
         isSaving={isManualSaving || isSyncing}
         saveSuccess={saveSuccessNotification}
+        isAutoSaving={isAutoSaving}
+        lastAutoSavedAt={lastAutoSavedAt}
         onManualSave={handleManualSaveAll}
+        onOpenBackupModal={() => setIsBackupRestoreModalOpen(true)}
         onChangeMonth={setCurrentMonth}
         onOpenAddModal={(type) => handleOpenAddTransaction(type || 'expense')}
         onOpenReminderModal={() => setIsReminderModalOpen(true)}
@@ -566,6 +740,19 @@ export default function App() {
           <div className="bg-emerald-600 text-white px-4 py-2.5 rounded-2xl shadow-xl flex items-center gap-2 border border-emerald-400 font-bold text-xs">
             <span className="w-2 h-2 rounded-full bg-white animate-ping" />
             <span>Đã lưu toàn bộ dữ liệu an toàn vào máy & đồng bộ thành công!</span>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Auto-Save 1 Minute Toast */}
+      {autoSaveToast && (
+        <div className="fixed bottom-6 right-6 z-50 animate-in fade-in slide-in-from-bottom-4 duration-200">
+          <div className="bg-[#0b1329]/95 text-emerald-300 px-4 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2.5 border border-emerald-500/40 font-bold text-xs backdrop-blur-md">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span>{autoSaveToast} (định kỳ 1 phút)</span>
           </div>
         </div>
       )}
@@ -721,6 +908,21 @@ export default function App() {
           triggerAutoBackup(rawAccounts, transactions, categories, updated);
         }}
         onOpenAddTransaction={() => handleOpenAddTransaction('expense')}
+      />
+
+      <BackupRestoreModal
+        isOpen={isBackupRestoreModalOpen}
+        onClose={() => setIsBackupRestoreModalOpen(false)}
+        accounts={accounts}
+        transactions={transactions}
+        categories={categories}
+        reminders={reminders}
+        debts={debts}
+        currentMonth={currentMonth}
+        currentUser={currentUser}
+        lastSyncedAt={lastSyncedAt}
+        onApplyBackupPayload={handleApplyBackupPayload}
+        onTriggerSaveAll={handleManualSaveAll}
       />
 
       <AuthModal

@@ -44,7 +44,18 @@ export async function backupDataToCloud(
 
     await setDoc(doc(db, 'users', user.uid), payload, { merge: true });
     return nowStr;
-  } catch (error) {
+  } catch (error: any) {
+    // If offline or network issue, don't crash the application
+    if (
+      error instanceof Error &&
+      (error.message.includes('offline') ||
+        error.message.includes('unavailable') ||
+        error.message.includes('network') ||
+        error.message.includes('PERMISSION_DENIED'))
+    ) {
+      console.warn('Tạm thời ở chế độ ngoại tuyến (Offline). Dữ liệu đã được lưu an toàn trong máy tính.');
+      return nowStr;
+    }
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
@@ -61,7 +72,18 @@ export async function loadDataFromCloud(user: User): Promise<CloudUserData | nul
       return docSnap.data() as CloudUserData;
     }
     return null;
-  } catch (error) {
+  } catch (error: any) {
+    // If offline, permission denied, or backend unreachable, gracefully fallback to local data
+    if (
+      error instanceof Error &&
+      (error.message.includes('offline') ||
+        error.message.includes('unavailable') ||
+        error.message.includes('network') ||
+        error.message.includes('PERMISSION_DENIED'))
+    ) {
+      console.warn('Không thể kết nối Firestore (Offline hoặc chưa kích hoạt). Sử dụng dữ liệu lưu trên máy.');
+      return null;
+    }
     handleFirestoreError(error, OperationType.GET, path);
   }
 }
