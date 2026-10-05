@@ -82,11 +82,15 @@ export const getDaysInMonth = (year: number, month: number): number => {
 
 /**
  * So sánh thứ tự 2 giao dịch diễn ra trong cùng một ngày theo quy tắc tài chính chuẩn xác:
- * 1. Tôn trọng order người dùng đã thiết lập (bằng các nút di chuyển Lên/Xuống hoặc Đảo thứ tự)
- * 2. Tự động ưu tiên Tiền vào (Income / Chuyển khoản đến nhận tiền) diễn ra TRƯỚC Tiền ra (Expense / Chuyển khoản đi)
- *    để tiền nạp vào tài khoản trước rồi mới chi tiêu, tránh số dư bị âm vô lý
- * 3. So sánh thời gian (giờ:phút sớm hơn diễn ra trước)
- * 4. So sánh thời điểm khởi tạo createdAt
+ * 1. Tôn trọng order người dùng đã thiết lập (nếu có di chuyển ▲/▼ thủ công)
+ * 2. Tự động phân tích quan hệ dòng tiền trên tài khoản chung giữa 2 giao dịch:
+ *    - Nếu cả 2 cùng tác động lên một tài khoản ngân hàng (ví dụ Bắc Á, Vietcombank...):
+ *      Giao dịch làm TĂNG tiền tài khoản (Income hoặc Chuyển khoản đến nhận tiền)
+ *      BẮT BUỘC PHẢI DIỄN RA TRƯỚC giao dịch làm GIẢM tiền tài khoản (Expense hoặc Chuyển khoản đi/tiết kiệm)
+ *      để tiền nạp vào trước rồi mới chi/chuyển đi, tránh số dư bị âm vô lý!
+ * 3. Ưu tiên tiền vào hệ thống trước tiền ra khỏi hệ thống
+ * 4. So sánh thời gian (giờ:phút sớm hơn diễn ra trước)
+ * 5. So sánh thời điểm khởi tạo createdAt
  */
 export const compareTransactionsSameDay = (a: Transaction, b: Transaction): number => {
   // 1. Tôn trọng order người dùng đã thiết lập
@@ -96,20 +100,43 @@ export const compareTransactionsSameDay = (a: Transaction, b: Transaction): numb
   if (a.order !== undefined) return -1;
   if (b.order !== undefined) return 1;
 
-  // 2. Ưu tiên tiền vào trước tiền ra
-  const aIsInflow = a.type === 'income' || (a.type === 'transfer' && Boolean(a.toAccountId));
-  const bIsInflow = b.type === 'income' || (b.type === 'transfer' && Boolean(b.toAccountId));
-  const aIsExpense = a.type === 'expense';
-  const bIsExpense = b.type === 'expense';
+  // 2. Tìm tài khoản chung giữa 2 giao dịch (loại trừ 'saving')
+  const aAccounts = [a.accountId, a.toAccountId].filter(Boolean) as string[];
+  const bAccounts = [b.accountId, b.toAccountId].filter(Boolean) as string[];
+  const commonAccount = aAccounts.find((id) => id !== 'saving' && bAccounts.includes(id));
 
-  if (aIsInflow && bIsExpense) return -1;
-  if (aIsExpense && bIsInflow) return 1;
+  if (commonAccount) {
+    // Xác định giao dịch nào làm TĂNG (+1) tiền tài khoản chung và giao dịch nào làm GIẢM (-1)
+    const getEffectOnAccount = (tx: Transaction, accId: string): number => {
+      if (tx.type === 'income' && tx.accountId === accId) return 1;
+      if (tx.type === 'transfer' && tx.toAccountId === accId) return 1;
+      if (tx.type === 'expense' && tx.accountId === accId) return -1;
+      if (tx.type === 'transfer' && tx.accountId === accId) return -1;
+      return 0;
+    };
 
-  // 3. So sánh giờ
+    const effectA = getEffectOnAccount(a, commonAccount);
+    const effectB = getEffectOnAccount(b, commonAccount);
+
+    // Giao dịch nạp tiền (+1) PHẢI đi trước giao dịch rút tiền/chi tiêu (-1)
+    if (effectA > effectB) return -1;
+    if (effectA < effectB) return 1;
+  }
+
+  // 3. Ưu tiên tiền vào chung trước tiền ra
+  const isPureInflow = (tx: Transaction) =>
+    tx.type === 'income' || (tx.type === 'transfer' && Boolean(tx.toAccountId) && tx.toAccountId !== 'saving');
+  const isPureOutflow = (tx: Transaction) =>
+    tx.type === 'expense' || (tx.type === 'transfer' && (!tx.toAccountId || tx.toAccountId === 'saving'));
+
+  if (isPureInflow(a) && isPureOutflow(b)) return -1;
+  if (isPureOutflow(a) && isPureInflow(b)) return 1;
+
+  // 4. So sánh giờ
   if ((a.time || '') !== (b.time || '')) {
     return (a.time || '').localeCompare(b.time || '');
   }
 
-  // 4. So sánh thời điểm tạo
+  // 5. So sánh thời điểm tạo
   return (a.createdAt || 0) - (b.createdAt || 0);
 };

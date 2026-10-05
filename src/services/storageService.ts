@@ -44,10 +44,56 @@ export const getStoredTransactions = (): Transaction[] => {
   try {
     const parsed: Transaction[] = JSON.parse(data);
     if (Array.isArray(parsed)) {
-      // Chuẩn hóa thứ tự giao dịch ngày 29/09/2026 theo đúng thực tế tài chính:
+      let needsSave = false;
+
+      // 1. Chuẩn hóa thứ tự giao dịch ngày 15/09/2026 theo đúng thực tế tài chính:
+      // Khoản chuyển vào 11.000.000đ từ Vietcombank sang Bắc Á diễn ra TRƯỚC (order: 0, time: 16:19)
+      // để số dư Bắc Á từ 2.000.000đ tăng lên 13.000.000đ.
+      // Sau đó khoản trích 11.000.000đ trả chú diễn ra TIẾP THEO (order: 1, time: 16:20) để số dư về lại 2.000.000đ (không bị âm -9.000.000đ).
+      // Cuối cùng khoản gửi tiết kiệm 2.000.000đ diễn ra (order: 2, time: 19:06) để số dư về 0đ.
+      const tx15TransferIn = parsed.find(
+        (t) =>
+          t.date === '2026-09-15' &&
+          t.type === 'transfer' &&
+          t.amount === 11000000 &&
+          (t.toAccountId === 'acc-bac-a' || t.description.toLowerCase().includes('bắc á'))
+      );
+      const tx15TransferOut11M = parsed.find(
+        (t) =>
+          t.date === '2026-09-15' &&
+          t.type === 'transfer' &&
+          t.amount === 11000000 &&
+          (t.accountId === 'acc-bac-a' || t.note?.toLowerCase().includes('trả chú')) &&
+          t.id !== tx15TransferIn?.id
+      );
+      const tx15TransferOut2M = parsed.find(
+        (t) =>
+          t.date === '2026-09-15' &&
+          t.type === 'transfer' &&
+          t.amount === 2000000
+      );
+
+      if (tx15TransferIn && tx15TransferOut11M) {
+        if (
+          tx15TransferIn.order !== 0 ||
+          tx15TransferOut11M.order !== 1 ||
+          (tx15TransferIn.time || '') >= (tx15TransferOut11M.time || '')
+        ) {
+          tx15TransferIn.order = 0;
+          tx15TransferIn.time = '16:19';
+          tx15TransferOut11M.order = 1;
+          tx15TransferOut11M.time = '16:20';
+          if (tx15TransferOut2M) {
+            tx15TransferOut2M.order = 2;
+            tx15TransferOut2M.time = '19:06';
+          }
+          needsSave = true;
+        }
+      }
+
+      // 2. Chuẩn hóa thứ tự giao dịch ngày 29/09/2026 theo đúng thực tế tài chính:
       // Khoản chuyển vào 3.000.000đ diễn ra TRƯỚC (order: 0, time: 17:16) để số dư Vietcombank tăng lên 3.452.013đ
       // Sau đó khoản cho mượn 3.000.000đ diễn ra SAU (order: 1, time: 17:29) để số dư về lại 452.013đ (không bị âm tài khoản)
-      let needsSave = false;
       const txTransferIn = parsed.find(
         (t) => t.date === '2026-09-29' && t.type === 'transfer' && t.amount === 3000000
       );
