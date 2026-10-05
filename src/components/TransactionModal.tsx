@@ -133,6 +133,8 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
         categoryId: type !== 'transfer' ? categoryId : undefined,
         description: description.trim() || (type === 'transfer' ? 'Chuyển tiền nội bộ' : type === 'expense' ? 'Khoản chi tiêu' : 'Khoản thu nhập'),
         note: note.trim(),
+        order: editingTransaction?.order,
+        tags: editingTransaction?.tags,
       },
       editingTransaction?.id
     );
@@ -250,6 +252,15 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 Xóa
               </button>
             </div>
+
+            {editingTransaction && (
+              <div className="mt-2.5 p-2 rounded-xl bg-emerald-50 border border-emerald-200 text-[11px] font-semibold text-emerald-800 flex items-center gap-1.5">
+                <span>💡</span>
+                <span>
+                  Sau khi sửa số tiền, hệ thống sẽ <strong>tự động tính toán và cập nhật lại số tiền còn lại</strong> của các ngày sau đó.
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Account Selector (The bank / wallet that pays or receives) */}

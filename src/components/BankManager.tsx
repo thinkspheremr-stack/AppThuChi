@@ -21,6 +21,7 @@ import {
   Building2,
   Coins,
   Camera,
+  Pencil,
 } from 'lucide-react';
 
 interface BankManagerProps {
@@ -36,6 +37,7 @@ interface BankManagerProps {
   onOpenTransfer: (sourceAccountId?: string) => void;
   onOpenSalaryAllocation: () => void;
   onAddTransaction: (transaction: Omit<Transaction, 'id' | 'createdAt'>) => void;
+  onEditTransaction?: (transaction: Transaction) => void;
   onAddBatchTransactions?: (transactions: Array<Omit<Transaction, 'id' | 'createdAt'>>) => void;
   onDeleteTransaction: (id: string) => void;
 }
@@ -53,6 +55,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
   onOpenTransfer,
   onOpenSalaryAllocation,
   onAddTransaction,
+  onEditTransaction,
   onAddBatchTransactions,
   onDeleteTransaction,
 }) => {
@@ -302,13 +305,22 @@ export const BankManager: React.FC<BankManagerProps> = ({
 
     const originalTx = transactions.find((t) => t.id === txId);
     if (originalTx && editAmount && Number(editAmount) > 0) {
-      onAddTransaction({
-        ...originalTx,
-        date: formattedDate,
-        amount: Number(editAmount),
-        description: editDescription.trim() || originalTx.description,
-      });
-      onDeleteTransaction(txId);
+      if (onEditTransaction) {
+        onEditTransaction({
+          ...originalTx,
+          date: formattedDate,
+          amount: Number(editAmount),
+          description: editDescription.trim() || originalTx.description,
+        });
+      } else {
+        onAddTransaction({
+          ...originalTx,
+          date: formattedDate,
+          amount: Number(editAmount),
+          description: editDescription.trim() || originalTx.description,
+        });
+        onDeleteTransaction(txId);
+      }
     }
     setEditingRowId(null);
   };
@@ -1094,24 +1106,35 @@ export const BankManager: React.FC<BankManagerProps> = ({
 
                       {/* Cột 2: Số tiền */}
                       <td className="py-2.5 px-4 whitespace-nowrap">
-                        <span
-                          className={`font-black text-xs px-2.5 py-1 rounded-md tracking-tight ${
-                            isSavingInThu
-                              ? 'bg-teal-500/20 text-teal-300 border border-teal-500/30'
-                              : isIncoming
-                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                              : subTab === 'chi'
-                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                              : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-                          }`}
+                        <button
+                          type="button"
+                          onClick={() => handleStartEdit(tx)}
+                          className="group/amtbtn flex items-center gap-1.5 cursor-pointer text-left focus:outline-none"
+                          title="Bấm để sửa số tiền (sau khi sửa số tiền còn lại các ngày sau sẽ tự động tính lại)"
                         >
-                          {isIncoming ? '+' : '-'}
-                          {formatCurrency(tx.amount)}
-                        </span>
+                          <span
+                            className={`font-black text-xs px-2.5 py-1 rounded-md tracking-tight transition-all group-hover/amtbtn:ring-2 group-hover/amtbtn:ring-white/50 group-hover/amtbtn:scale-105 ${
+                              isSavingInThu
+                                ? 'bg-teal-500/20 text-teal-300 border border-teal-500/30'
+                                : isIncoming
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                : subTab === 'chi'
+                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                            }`}
+                          >
+                            {isIncoming ? '+' : '-'}
+                            {formatCurrency(tx.amount)}
+                          </span>
+                          <Pencil className="w-3 h-3 text-sky-400 opacity-40 group-hover/amtbtn:opacity-100 transition-opacity" />
+                        </button>
                       </td>
 
                       {/* Cột 3: Số tiền còn lại sau giao dịch */}
-                      <td className="py-2.5 px-4 text-right font-black text-amber-200 whitespace-nowrap text-xs">
+                      <td
+                        className="py-2.5 px-4 text-right font-black text-amber-200 whitespace-nowrap text-xs"
+                        title="Số tiền còn lại sau giao dịch (tự động tính và cập nhật cho các ngày tiếp theo)"
+                      >
                         {formatCurrency(bankRunningBalances.get(tx.id) ?? activeAccount?.balance ?? 0)}
                       </td>
 

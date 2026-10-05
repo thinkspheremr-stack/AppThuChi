@@ -488,6 +488,7 @@ export default function App() {
       nextTransactions = [newTx, ...transactions];
     }
     setTransactions(nextTransactions);
+    saveTransactions(nextTransactions);
     triggerAutoBackup(rawAccounts, nextTransactions, categories, reminders);
   };
 
@@ -502,12 +503,14 @@ export default function App() {
     }));
     const nextTransactions = [...newTxs, ...transactions];
     setTransactions(nextTransactions);
+    saveTransactions(nextTransactions);
     triggerAutoBackup(rawAccounts, nextTransactions, categories, reminders);
   };
 
   const handleDeleteTransaction = (id: string) => {
     const nextTransactions = transactions.filter((t) => t.id !== id);
     setTransactions(nextTransactions);
+    saveTransactions(nextTransactions);
     triggerAutoBackup(rawAccounts, nextTransactions, categories, reminders);
   };
 
@@ -526,12 +529,14 @@ export default function App() {
     };
     const nextAccounts = [...rawAccounts, newAcc];
     setRawAccounts(nextAccounts);
+    saveAccounts(nextAccounts);
     triggerAutoBackup(nextAccounts, transactions, categories, reminders);
   };
 
   const handleEditAccount = (acc: Account) => {
     const nextAccounts = rawAccounts.map((a) => (a.id === acc.id ? acc : a));
     setRawAccounts(nextAccounts);
+    saveAccounts(nextAccounts);
     triggerAutoBackup(nextAccounts, transactions, categories, reminders);
   };
 
@@ -861,6 +866,7 @@ export default function App() {
               onOpenTransfer={handleOpenTransfer}
               onOpenSalaryAllocation={() => setIsSalaryModalOpen(true)}
               onAddTransaction={handleSaveTransaction}
+              onEditTransaction={(updatedTx) => handleSaveTransaction(updatedTx, updatedTx.id)}
               onAddBatchTransactions={handleSaveBatchTransactions}
               onDeleteTransaction={handleDeleteTransaction}
             />
@@ -875,6 +881,7 @@ export default function App() {
               onEditTransaction={handleEditTransactionClick}
               onDeleteTransaction={handleDeleteTransaction}
               onUpdateTransactions={handleUpdateTransactions}
+              onEditAccount={handleEditAccount}
               onExportCSV={handleExportCSV}
             />
           </>
