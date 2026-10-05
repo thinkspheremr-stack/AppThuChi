@@ -524,9 +524,20 @@ export const BankManager: React.FC<BankManagerProps> = ({
           </div>
         </div>
 
-        {/* Center / Highlight: Thu: ... & Chi: ... */}
+        {/* Center / Highlight: Số dư hiện có, Thu & Chi */}
         <div className="max-w-md mx-auto space-y-3 py-1">
-          {/* Box Thu */}
+          {/* Box 1: Số dư hiện có tại tài khoản (Được đưa lên đầu tiên và phóng to như Thu và Chi) */}
+          <div className="bg-[#bde0fe] text-sky-950 rounded-xl p-3 flex items-center justify-between border border-sky-300/80 shadow-xs">
+            <span className="font-extrabold text-sm uppercase tracking-wide flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />
+              Số dư hiện có tại {activeAccount?.name}:
+            </span>
+            <span className="font-black text-lg text-sky-950">
+              {formatCurrency(activeAccount?.balance || 0)}
+            </span>
+          </div>
+
+          {/* Box 2: Thu (Tiền vào tài khoản) */}
           <div className="bg-[#bde0fe] text-sky-950 rounded-xl p-3 border border-sky-300/80 shadow-xs space-y-1">
             <div className="flex items-center justify-between">
               <span className="font-extrabold text-sm uppercase tracking-wide flex items-center gap-2">
@@ -547,7 +558,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
             )}
           </div>
 
-          {/* Box Chi */}
+          {/* Box 3: Chi */}
           <div className="bg-[#bde0fe] text-sky-950 rounded-xl p-3 flex items-center justify-between border border-sky-300/80 shadow-xs">
             <span className="font-extrabold text-sm uppercase tracking-wide flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-rose-600" />
@@ -555,14 +566,6 @@ export const BankManager: React.FC<BankManagerProps> = ({
             </span>
             <span className="font-black text-lg text-rose-800">
               -{formatCurrency(totalOutflow)}
-            </span>
-          </div>
-
-          {/* Subtext: Số dư hiện có của ngân hàng này */}
-          <div className="text-center text-xs text-sky-200 font-medium pt-1">
-            Số dư hiện có tại <strong>{activeAccount?.name}</strong>: {' '}
-            <span className="font-bold text-white text-sm bg-sky-900/60 px-2 py-0.5 rounded-md">
-              {formatCurrency(activeAccount?.balance || 0)}
             </span>
           </div>
         </div>
