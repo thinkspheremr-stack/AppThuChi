@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Account, Category, Transaction } from '../types';
 import { formatCurrency, formatFriendlyDate, formatMonthYear } from '../utils/formatters';
 import { CategoryIcon } from './CategoryIcon';
+import { CategoryTimelineReport } from './CategoryTimelineReport';
 import {
   FileText,
   TrendingUp,
@@ -44,7 +45,7 @@ export const FinancialReportTable: React.FC<FinancialReportTableProps> = ({
   onOpenTransfer,
   onOpenSalaryAllocation,
 }) => {
-  const [activeReportTab, setActiveReportTab] = useState<'all' | 'savings' | 'transfers'>('all');
+  const [activeReportTab, setActiveReportTab] = useState<'all' | 'savings' | 'transfers' | 'category'>('all');
 
   // Month parse
   const [yearStr, monthStr] = currentMonth.split('-');
@@ -234,6 +235,18 @@ export const FinancialReportTable: React.FC<FinancialReportTableProps> = ({
           >
             <ArrowRightLeft className="w-3.5 h-3.5" />
             <span>Chuyển Liên NH ({allBankTransfers.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveReportTab('category')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+              activeReportTab === 'category'
+                ? 'bg-rose-400 text-slate-950 shadow-xs'
+                : 'bg-white/10 hover:bg-white/20 text-sky-100'
+            }`}
+          >
+            <PieChart className="w-3.5 h-3.5" />
+            <span>Báo Cáo Danh Mục</span>
           </button>
         </div>
       </div>
@@ -718,6 +731,19 @@ export const FinancialReportTable: React.FC<FinancialReportTableProps> = ({
                 </table>
               </div>
             )}
+          </div>
+        )}
+
+        {/* VIEW 4: BÁO CÁO THEO DANH MỤC VỚI 1 HOẶC NHIỀU NGÂN HÀNG & THEO THỜI GIAN */}
+        {activeReportTab === 'category' && (
+          <div className="pt-2">
+            <CategoryTimelineReport
+              accounts={accounts}
+              transactions={transactions}
+              categories={categories}
+              currentMonth={currentMonth}
+              onSelectAccount={onSelectAccount}
+            />
           </div>
         )}
       </div>

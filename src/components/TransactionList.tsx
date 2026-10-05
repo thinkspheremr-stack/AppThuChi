@@ -137,7 +137,31 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   const filteredTransactions = useMemo(() => {
     return transactions.filter((t) => {
       // Type filter
-      if (typeFilter !== 'all' && t.type !== typeFilter) return false;
+      if (typeFilter !== 'all') {
+        if (typeFilter === 'expense' && t.type !== 'expense') return false;
+        if (typeFilter === 'income' && t.type !== 'income') return false;
+        if (typeFilter === 'transfer' && t.type !== 'transfer') return false;
+        if (typeFilter === 'loan') {
+          const isLoan =
+            t.tags?.includes('loan') ||
+            t.tags?.includes('lend') ||
+            t.tags?.includes('repay') ||
+            /mượn|cho vay|trả nợ|thu nợ|cho mượn|vay/i.test(t.description || '');
+          if (!isLoan) return false;
+        }
+        if (typeFilter === 'loan_lend') {
+          const isLend =
+            (t.tags?.includes('loan') || t.tags?.includes('lend') || /cho mượn|cho vay/i.test(t.description || '')) &&
+            (t.type === 'expense' || t.tags?.includes('lend'));
+          if (!isLend) return false;
+        }
+        if (typeFilter === 'loan_repay') {
+          const isRepay =
+            (t.tags?.includes('loan') || t.tags?.includes('repay') || /trả|thu nợ/i.test(t.description || '')) &&
+            (t.type === 'income' || t.tags?.includes('repay'));
+          if (!isRepay) return false;
+        }
+      }
 
       // Account filter
       if (accountFilter !== 'all') {
@@ -611,6 +635,9 @@ export const TransactionList: React.FC<TransactionListProps> = ({
             <option value="expense">Chỉ khoản chi</option>
             <option value="income">Chỉ khoản thu</option>
             <option value="transfer">Chuyển khoản nội bộ</option>
+            <option value="loan">Mục Cho vay & Mượn nợ</option>
+            <option value="loan_lend">• Chỉ khoản Cho mượn</option>
+            <option value="loan_repay">• Chỉ khoản Trả nợ</option>
           </select>
         </div>
 
@@ -860,8 +887,18 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
                                       {/* Details */}
                                       <div className="min-w-0">
-                                        <div className="font-semibold text-sm text-slate-800 truncate">
-                                          {tx.description}
+                                        <div className="font-semibold text-sm text-slate-800 truncate flex items-center gap-1.5">
+                                          {(tx.tags?.includes('lend') || (tx.type === 'expense' && /mượn|cho vay/i.test(tx.description || ''))) && (
+                                            <span className="font-bold text-[10px] text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300 shrink-0">
+                                              Mục Cho mượn
+                                            </span>
+                                          )}
+                                          {(tx.tags?.includes('repay') || (tx.type === 'income' && /trả|thu nợ/i.test(tx.description || ''))) && (
+                                            <span className="font-bold text-[10px] text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded border border-emerald-300 shrink-0">
+                                              Mục Trả
+                                            </span>
+                                          )}
+                                          <span>{tx.description}</span>
                                         </div>
                                         <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500 mt-0.5">
                                           {/* Bank badge */}

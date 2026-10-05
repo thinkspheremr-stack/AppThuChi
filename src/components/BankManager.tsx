@@ -1,11 +1,14 @@
 import React, { useState, useMemo } from 'react';
-import { Account, AccountType, Category, Transaction } from '../types';
+import { Account, AccountType, Category, Transaction, DebtRecord, DebtPayment } from '../types';
 import { formatCurrency, formatFriendlyDate, compareTransactionsSameDay } from '../utils/formatters';
 import { CategoryIcon } from './CategoryIcon';
 import { ReceiptScannerModal } from './ReceiptScannerModal';
+import { CategoryManagerModal } from './CategoryManagerModal';
 import {
   Plus,
   ArrowRightLeft,
+  ArrowUpRight,
+  ArrowDownLeft,
   Sparkles,
   TrendingUp,
   TrendingDown,
@@ -22,6 +25,7 @@ import {
   Coins,
   Camera,
   Pencil,
+  Settings,
 } from 'lucide-react';
 
 interface BankManagerProps {
@@ -40,6 +44,12 @@ interface BankManagerProps {
   onEditTransaction?: (transaction: Transaction) => void;
   onAddBatchTransactions?: (transactions: Array<Omit<Transaction, 'id' | 'createdAt'>>) => void;
   onDeleteTransaction: (id: string) => void;
+  debts?: DebtRecord[];
+  onAddDebt?: (debt: Omit<DebtRecord, 'id' | 'createdAt' | 'paidAmount' | 'remainingAmount' | 'status' | 'payments'>) => void;
+  onRecordPayment?: (debtId: string, payment: Omit<DebtPayment, 'id' | 'createdAt'>) => void;
+  onAddCategory?: (category: Omit<Category, 'id'>) => void;
+  onEditCategory?: (category: Category) => void;
+  onDeleteCategory?: (categoryId: string) => void;
 }
 
 export const BankManager: React.FC<BankManagerProps> = ({
@@ -58,16 +68,30 @@ export const BankManager: React.FC<BankManagerProps> = ({
   onEditTransaction,
   onAddBatchTransactions,
   onDeleteTransaction,
+  debts = [],
+  onAddDebt,
+  onRecordPayment,
+  onAddCategory,
+  onEditCategory,
+  onDeleteCategory,
 }) => {
   // Active bank
   const activeAccountId = selectedAccountId || accounts[0]?.id || '';
   const activeAccount = accounts.find((a) => a.id === activeAccountId) || accounts[0];
 
-  // 3 Main Tabs: 'chi' | 'thu' | 'chuyen' (Theo đúng bản vẽ mới nhất)
-  const [subTab, setSubTab] = useState<'chi' | 'thu' | 'chuyen'>('chi');
+  // 4 Main Tabs: 'chi' | 'thu' | 'chuyen' | 'chovay' (Theo đúng bản vẽ và vị trí bôi màu xanh)
+  const [subTab, setSubTab] = useState<'chi' | 'thu' | 'chuyen' | 'chovay'>('chi');
 
-  // Sub-modes inside [Chuyển]: 'bank' (Chuyển giữa các ngân hàng) | 'saving' (Mục Tiết kiệm)
-  const [transferMode, setTransferMode] = useState<'bank' | 'saving'>('bank');
+  // Sub-modes inside [Chuyển]: 'bank' (Chuyển giữa các ngân hàng) | 'saving' (Mục Tiết kiệm) | 'loan' (Mục Cho vay)
+  const [transferMode, setTransferMode] = useState<'bank' | 'saving' | 'loan'>('bank');
+  // Sub-action inside [Cho vay]: 'lend' (Cho mượn) | 'repay' (Trả nợ / Thu nợ)
+  const [loanAction, setLoanAction] = useState<'lend' | 'repay'>('lend');
+  // Sub-filter inside [Cho vay]: 'all' (Tất cả) | 'lend' (Chỉ mục cho mượn) | 'repay' (Chỉ mục trả)
+  const [loanFilter, setLoanFilter] = useState<'all' | 'lend' | 'repay'>('all');
+  const [borrowerName, setBorrowerName] = useState<string>('');
+
+  // Category Manager Modal state
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
 
   // Month parse: e.g. "2026-09" -> year 2026, month 9
   const [yearStr, monthStr] = currentMonth.split('-');
@@ -182,6 +206,37 @@ export const BankManager: React.FC<BankManagerProps> = ({
   );
   const totalSavingsThisMonth = savingsTransfersOut.reduce((sum, t) => sum + t.amount, 0);
 
+  // 4. Cho vay & Trả nợ theo tài khoản này trong tháng:
+  const loanTransactions = monthTransactions.filter((t) => {
+    const isThisAccount =
+      t.accountId === activeAccountId || (t.type === 'transfer' && t.toAccountId === activeAccountId);
+    if (!isThisAccount) return false;
+    const isTagLoan = t.tags?.includes('loan') || t.tags?.includes('lend') || t.tags?.includes('repay');
+    const isDescLoan =
+      /mượn|cho vay|trả nợ|thu nợ|cho mượn|vay|thu hồi nợ|trả nợ vay/i.test(t.description || '') ||
+      /mượn|cho vay|trả nợ|thu nợ|cho mượn|vay/i.test(t.note || '');
+    return isTagLoan || isDescLoan;
+  });
+
+  // Mục Cho mượn (Khoản tiền chi ra / cho mượn từ tài khoản này)
+  const loanLendList = loanTransactions.filter(
+    (t) =>
+      t.tags?.includes('lend') ||
+      (t.type === 'expense' && !t.tags?.includes('repay')) ||
+      /cho mượn|cho vay/i.test(t.description || '')
+  );
+
+  // Mục Trả (Khoản tiền người ta trả nợ / thu hồi về tài khoản này)
+  const loanRepayList = loanTransactions.filter(
+    (t) =>
+      t.tags?.includes('repay') ||
+      (t.type === 'income' && !t.tags?.includes('lend')) ||
+      /trả|thu nợ|thu hồi/i.test(t.description || '')
+  );
+
+  const totalLoanOut = loanLendList.reduce((sum, t) => sum + t.amount, 0);
+  const totalLoanIn = loanRepayList.reduce((sum, t) => sum + t.amount, 0);
+
   // Tính số tiền còn lại (running balance) của tài khoản đang chọn theo thứ tự thời gian
   // Bắt đầu từ số dư ban đầu, giảm khi chi tiêu/chuyển đi và tăng khi có thu nhập/chuyển vào
   const bankRunningBalances = useMemo(() => {
@@ -225,8 +280,68 @@ export const BankManager: React.FC<BankManagerProps> = ({
     if (dayNumber > 31) dayNumber = 31;
     const formattedDate = `${currentMonth}-${String(dayNumber).padStart(2, '0')}`;
 
-    if (subTab === 'chuyen') {
-      if (transferMode === 'bank') {
+    if (subTab === 'chovay' || subTab === 'chuyen') {
+      if (subTab === 'chovay' || transferMode === 'loan') {
+        // Mục cho vay theo tài khoản (có mục cho mượn và có mục trả)
+        const person = borrowerName.trim();
+        if (loanAction === 'lend') {
+          // 1. Cho mượn: Tiền xuất/chi từ tài khoản này
+          const desc = inputDescription.trim() || (person ? `Cho ${person} mượn` : 'Cho mượn tiền');
+          onAddTransaction({
+            type: 'expense',
+            amount: calculatedAmount,
+            date: formattedDate,
+            time: new Date().toTimeString().slice(0, 5),
+            accountId: activeAccount.id,
+            description: desc,
+            note: person ? `Cho mượn • Người mượn: ${person}` : 'Khoản cho mượn từ tài khoản',
+            tags: ['loan', 'lend'],
+          });
+
+          // Tự động đồng bộ vào Sổ Nợ nếu có
+          if (onAddDebt) {
+            onAddDebt({
+              type: 'lend',
+              personName: person || 'Người mượn',
+              originalAmount: calculatedAmount,
+              startDate: formattedDate,
+              description: desc,
+              accountId: activeAccount.id,
+            });
+          }
+        } else {
+          // 2. Trả: Người mượn trả tiền về tài khoản này (Thu vào)
+          const desc = inputDescription.trim() || (person ? `${person} trả tiền mượn` : 'Thu tiền cho mượn');
+          onAddTransaction({
+            type: 'income',
+            amount: calculatedAmount,
+            date: formattedDate,
+            time: new Date().toTimeString().slice(0, 5),
+            accountId: activeAccount.id,
+            description: desc,
+            note: person ? `Thu nợ / Được trả • Người trả: ${person}` : 'Khoản tiền người mượn trả về tài khoản',
+            tags: ['loan', 'repay'],
+          });
+
+          // Nếu có khoản nợ khớp trong Sổ Nợ, tự động ghi nhận thanh toán
+          if (person && debts.length > 0 && onRecordPayment) {
+            const matchingDebt = debts.find(
+              (d) =>
+                d.type === 'lend' &&
+                d.status !== 'paid' &&
+                d.personName.toLowerCase().includes(person.toLowerCase())
+            );
+            if (matchingDebt) {
+              onRecordPayment(matchingDebt.id, {
+                amount: calculatedAmount,
+                date: formattedDate,
+                note: desc,
+                accountId: activeAccount.id,
+              });
+            }
+          }
+        }
+      } else if (transferMode === 'bank') {
         // Transfer between banks
         const targetId = targetBankId || otherAccounts[0]?.id;
         if (!targetId) {
@@ -245,7 +360,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
           description: inputDescription.trim() || `Chuyển sang ${targetAcc?.name || 'ngân hàng khác'}`,
           note: `Chuyển từ ${activeAccount.name} sang ${targetAcc?.name || 'tài khoản khác'}`,
         });
-      } else {
+      } else if (transferMode === 'saving') {
         // Transfer to Saving ("ngân hàng này chuyển Mục tiết kiệm thì ở trong Phần Thu sẽ xuất hiện Mục tiết kiệm: ....")
         const saveName = savingTitle.trim() || 'Tiết kiệm tích lũy';
         onAddTransaction({
@@ -285,6 +400,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
 
     setInputRawAmount('');
     setInputDescription('');
+    setBorrowerName('');
   };
 
   // Start inline editing of an existing row
@@ -396,15 +512,27 @@ export const BankManager: React.FC<BankManagerProps> = ({
     setIsAccountModalOpen(true);
   };
 
-  // The active list based on user's selected subTab ('chi' | 'thu' | 'chuyen')
+  // The active list based on user's selected subTab ('chi' | 'thu' | 'chuyen' | 'chovay')
   let currentList: Transaction[] = [];
   if (subTab === 'chi') {
     currentList = outflows;
   } else if (subTab === 'thu') {
     currentList = inflows;
+  } else if (subTab === 'chuyen') {
+    if (transferMode === 'bank') {
+      currentList = bankTransfersOut;
+    } else if (transferMode === 'saving') {
+      currentList = savingsTransfersOut;
+    } else {
+      if (loanFilter === 'lend') currentList = loanLendList;
+      else if (loanFilter === 'repay') currentList = loanRepayList;
+      else currentList = loanTransactions;
+    }
   } else {
-    // subTab === 'chuyen'
-    currentList = transferMode === 'bank' ? bankTransfersOut : savingsTransfersOut;
+    // subTab === 'chovay' (Mục cho vay theo tài khoản)
+    if (loanFilter === 'lend') currentList = loanLendList;
+    else if (loanFilter === 'repay') currentList = loanRepayList;
+    else currentList = loanTransactions;
   }
   currentList = [...currentList].sort((a, b) => {
     if (a.date !== b.date) return b.date.localeCompare(a.date);
@@ -583,20 +711,43 @@ export const BankManager: React.FC<BankManagerProps> = ({
               -{formatCurrency(totalOutflow)}
             </span>
           </div>
+
+          {/* Box 4: Cho vay theo tài khoản (Cho mượn & Trả) */}
+          {(totalLoanOut > 0 || totalLoanIn > 0) && (
+            <div className="bg-[#bde0fe] text-sky-950 rounded-xl p-3 border border-sky-300/80 shadow-xs space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="font-extrabold text-sm uppercase tracking-wide flex items-center gap-2">
+                  <Coins className="w-4 h-4 text-amber-700" />
+                  Mục Cho vay ({activeAccount?.name}):
+                </span>
+                <span className="font-black text-xs bg-amber-600/20 text-amber-950 px-2 py-0.5 rounded-lg border border-amber-600/30">
+                  Dư nợ cần thu: {formatCurrency(Math.max(0, totalLoanOut - totalLoanIn))}
+                </span>
+              </div>
+              <div className="text-[11px] text-sky-950 font-semibold flex items-center justify-between pt-0.5 border-t border-sky-300/60">
+                <span className="text-rose-900">
+                  • Cho mượn: -{formatCurrency(totalLoanOut)}
+                </span>
+                <span className="text-emerald-900">
+                  • Đã trả: +{formatCurrency(totalLoanIn)}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
       {/* ========================================================================= */}
-      {/* KHUNG DƯỚI: TAB [Chi] [Thu:] [Chuyển] (Theo đúng bản vẽ mới)              */}
-      {/* Trong [Chuyển]: có 2 mục [Ngân hàng] và [Tiết kiệm]                      */}
+      {/* KHUNG DƯỚI: TAB [Chi] [Thu:] [Chuyển] [Cho vay] (Theo đúng bản vẽ mới)    */}
       {/* ========================================================================= */}
       <div className="bg-[#1b5e7d] text-white rounded-2xl shadow-md p-5 border border-sky-900/40">
-        {/* TOP ROW TABS: [Chi] [Thu:] [Chuyển] */}
+        {/* TOP ROW TABS: [Chi] [Thu:] [Chuyển] [Cho vay] */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <div className="flex items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2.5">
             <button
+              type="button"
               onClick={() => setSubTab('chi')}
-              className={`px-6 py-2 rounded-xl text-sm font-black transition-all shadow-xs ${
+              className={`px-5 py-2 rounded-xl text-sm font-black transition-all shadow-xs cursor-pointer ${
                 subTab === 'chi'
                   ? 'bg-[#bde0fe] text-rose-900 ring-2 ring-rose-400/80 shadow-md scale-102'
                   : 'bg-sky-800/80 text-sky-200 hover:bg-sky-700 hover:text-white'
@@ -606,8 +757,9 @@ export const BankManager: React.FC<BankManagerProps> = ({
             </button>
 
             <button
+              type="button"
               onClick={() => setSubTab('thu')}
-              className={`px-6 py-2 rounded-xl text-sm font-black transition-all shadow-xs ${
+              className={`px-5 py-2 rounded-xl text-sm font-black transition-all shadow-xs cursor-pointer ${
                 subTab === 'thu'
                   ? 'bg-[#bde0fe] text-emerald-900 ring-2 ring-emerald-400/80 shadow-md scale-102'
                   : 'bg-sky-800/80 text-sky-200 hover:bg-sky-700 hover:text-white'
@@ -617,15 +769,36 @@ export const BankManager: React.FC<BankManagerProps> = ({
             </button>
 
             <button
-              onClick={() => setSubTab('chuyen')}
-              className={`px-6 py-2 rounded-xl text-sm font-black transition-all shadow-xs flex items-center gap-1.5 ${
-                subTab === 'chuyen'
+              type="button"
+              onClick={() => {
+                setSubTab('chuyen');
+                if (transferMode === 'loan') setTransferMode('bank');
+              }}
+              className={`px-5 py-2 rounded-xl text-sm font-black transition-all shadow-xs flex items-center gap-1.5 cursor-pointer ${
+                subTab === 'chuyen' && transferMode !== 'loan'
                   ? 'bg-[#bde0fe] text-blue-950 ring-2 ring-sky-400/80 shadow-md scale-102'
                   : 'bg-sky-800/80 text-sky-200 hover:bg-sky-700 hover:text-white'
               }`}
             >
               <ArrowRightLeft className="w-4 h-4" />
               <span>Chuyển ({transfersOut.length})</span>
+            </button>
+
+            {/* MỤC CHO VAY THEO TÀI KHOẢN (VỊ TRÍ BÔI MÀU XANH) */}
+            <button
+              type="button"
+              onClick={() => {
+                setSubTab('chovay');
+                setTransferMode('loan');
+              }}
+              className={`px-5 py-2 rounded-xl text-sm font-black transition-all shadow-xs flex items-center gap-1.5 cursor-pointer ${
+                subTab === 'chovay' || (subTab === 'chuyen' && transferMode === 'loan')
+                  ? 'bg-[#bde0fe] text-amber-950 ring-2 ring-amber-400/90 shadow-md scale-102'
+                  : 'bg-sky-800/80 text-amber-200 hover:bg-sky-700 hover:text-white'
+              }`}
+            >
+              <Coins className="w-4 h-4 text-amber-400" />
+              <span>Cho vay ({loanTransactions.length})</span>
             </button>
           </div>
 
@@ -646,7 +819,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
           </div>
         </div>
 
-        {/* SUB-TABS ROW FOR [Chuyển]: [Ngân hàng] và [Tiết kiệm] */}
+        {/* SUB-TABS ROW FOR [Chuyển]: [Ngân hàng], [Tiết kiệm] và [Cho vay] */}
         {subTab === 'chuyen' && (
           <div className="flex flex-wrap items-center gap-2 mb-4 p-2 bg-sky-900/60 rounded-xl border border-sky-600/40 animate-in fade-in duration-150">
             <span className="text-xs font-bold text-sky-200 mr-2 flex items-center gap-1">
@@ -657,7 +830,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
             <button
               type="button"
               onClick={() => setTransferMode('bank')}
-              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 ${
+              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer ${
                 transferMode === 'bank'
                   ? 'bg-[#bde0fe] text-blue-950 ring-2 ring-sky-400 font-black'
                   : 'bg-sky-800 text-sky-200 hover:bg-sky-700 hover:text-white'
@@ -670,7 +843,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
             <button
               type="button"
               onClick={() => setTransferMode('saving')}
-              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 ${
+              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer ${
                 transferMode === 'saving'
                   ? 'bg-[#bde0fe] text-blue-950 ring-2 ring-emerald-400 font-black'
                   : 'bg-sky-800 text-sky-200 hover:bg-sky-700 hover:text-white'
@@ -680,11 +853,132 @@ export const BankManager: React.FC<BankManagerProps> = ({
               <span>Tiết kiệm</span>
             </button>
 
+            {/* MỤC CHO VAY THEO TÀI KHOẢN (Đúng vị trí bôi màu xanh theo yêu cầu) */}
+            <button
+              type="button"
+              onClick={() => setTransferMode('loan')}
+              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer ${
+                transferMode === 'loan'
+                  ? 'bg-[#bde0fe] text-blue-950 ring-2 ring-amber-400 font-black'
+                  : 'bg-sky-800 text-sky-200 hover:bg-sky-700 hover:text-white'
+              }`}
+            >
+              <Coins className="w-3.5 h-3.5 text-amber-400" />
+              <span>Cho vay</span>
+            </button>
+
             <span className="text-[11px] text-sky-300 ml-auto hidden sm:inline italic">
               {transferMode === 'bank'
                 ? '💡 Số chuyển đi sẽ tự động trở thành Phần Thu của ngân hàng nhận'
-                : '💡 Chuyển vào Tiết kiệm sẽ tự động xuất hiện trong Phần Thu (Mục Tiết kiệm)'}
+                : transferMode === 'saving'
+                ? '💡 Chuyển vào Tiết kiệm sẽ tự động xuất hiện trong Phần Thu (Mục Tiết kiệm)'
+                : '💡 Quản lý Cho mượn (tiền ra) và Trả nợ (tiền vào) theo tài khoản này'}
             </span>
+          </div>
+        )}
+
+        {/* BANNER THÔNG TIN & CHỌN MỤC: CHO MƯỢN VÀ TRẢ */}
+        {(subTab === 'chovay' || (subTab === 'chuyen' && transferMode === 'loan')) && (
+          <div className="mb-4 p-3.5 rounded-xl bg-gradient-to-r from-amber-950/70 via-sky-950/70 to-emerald-950/70 border-2 border-amber-400/60 shadow-md animate-in fade-in space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center font-bold border border-amber-500/40 shrink-0">
+                  <Coins className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="font-extrabold text-sm text-amber-200 flex items-center gap-2">
+                    <span>Mục Cho Vay / Mượn Nợ của {activeAccount?.name}:</span>
+                  </div>
+                  <div className="text-xs text-sky-200/90 flex flex-wrap items-center gap-3 sm:gap-4 mt-0.5">
+                    <span className="text-amber-300 font-bold">
+                      Đã cho mượn: <strong>-{formatCurrency(totalLoanOut)}</strong>
+                    </span>
+                    <span className="text-emerald-300 font-bold">
+                      Đã được trả: <strong>+{formatCurrency(totalLoanIn)}</strong>
+                    </span>
+                    <span className="text-amber-200 font-extrabold bg-amber-900/60 px-2 py-0.5 rounded border border-amber-500/50">
+                      Dư nợ cần thu: {formatCurrency(Math.max(0, totalLoanOut - totalLoanIn))}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2 Nút bấm chuyển đổi trực tiếp: [Mục Cho mượn] & [Mục Trả] */}
+              <div className="flex items-center gap-2 bg-black/50 p-1.5 rounded-xl border border-sky-500/40">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoanAction('lend');
+                    setLoanFilter('lend');
+                  }}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    loanAction === 'lend'
+                      ? 'bg-amber-400 text-slate-950 font-black shadow-md ring-2 ring-amber-300 scale-102'
+                      : 'text-amber-200 hover:text-white hover:bg-sky-800/60'
+                  }`}
+                >
+                  <ArrowUpRight className="w-4 h-4 text-rose-700" />
+                  <span>Mục Cho mượn (Tiền ra)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoanAction('repay');
+                    setLoanFilter('repay');
+                  }}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    loanAction === 'repay'
+                      ? 'bg-emerald-400 text-slate-950 font-black shadow-md ring-2 ring-emerald-300 scale-102'
+                      : 'text-emerald-200 hover:text-white hover:bg-sky-800/60'
+                  }`}
+                >
+                  <ArrowDownLeft className="w-4 h-4 text-emerald-800" />
+                  <span>Mục Trả (Tiền vào)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Bộ lọc hiển thị trong bảng: Tất cả | Chỉ mục cho mượn | Chỉ mục trả */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-sky-700/50 text-xs">
+              <span className="text-sky-300 font-semibold flex items-center gap-1">
+                Xem trong bảng:
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setLoanFilter('all')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer ${
+                    loanFilter === 'all'
+                      ? 'bg-sky-300 text-sky-950 font-black'
+                      : 'bg-sky-900/60 text-sky-200 hover:bg-sky-800'
+                  }`}
+                >
+                  Tất cả ({loanTransactions.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLoanFilter('lend')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer ${
+                    loanFilter === 'lend'
+                      ? 'bg-amber-400 text-slate-950 font-black'
+                      : 'bg-sky-900/60 text-amber-200 hover:bg-sky-800'
+                  }`}
+                >
+                  Khoản cho mượn ({loanLendList.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLoanFilter('repay')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer ${
+                    loanFilter === 'repay'
+                      ? 'bg-emerald-400 text-slate-950 font-black'
+                      : 'bg-sky-900/60 text-emerald-200 hover:bg-sky-800'
+                  }`}
+                >
+                  Khoản đã trả ({loanRepayList.length})
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -725,13 +1019,25 @@ export const BankManager: React.FC<BankManagerProps> = ({
                     ? 'bg-rose-400'
                     : subTab === 'thu'
                     ? 'bg-emerald-400'
+                    : subTab === 'chovay'
+                    ? loanAction === 'lend'
+                      ? 'bg-amber-400'
+                      : 'bg-emerald-400'
                     : 'bg-blue-400'
                 }`}
               />
-              {subTab === 'chuyen'
+              {subTab === 'chovay'
+                ? loanAction === 'lend'
+                  ? `Ghi khoản CHO MƯỢN từ tài khoản ${activeAccount?.name}:`
+                  : `Ghi nhận người ta TRẢ TIỀN MƯỢN vào tài khoản ${activeAccount?.name}:`
+                : subTab === 'chuyen'
                 ? transferMode === 'bank'
                   ? `Chuyển tiền từ ${activeAccount?.name} sang ngân hàng khác:`
-                  : `Chuyển từ ${activeAccount?.name} vào Mục Tiết Kiệm:`
+                  : transferMode === 'saving'
+                  ? `Chuyển từ ${activeAccount?.name} vào Mục Tiết Kiệm:`
+                  : loanAction === 'lend'
+                  ? `Ghi khoản CHO MƯỢN từ tài khoản ${activeAccount?.name}:`
+                  : `Ghi nhận người ta TRẢ TIỀN MƯỢN vào tài khoản ${activeAccount?.name}:`
                 : `Ghi nhanh mục ${subTab === 'chi' ? 'CHI' : 'THU'} vào ${activeAccount?.name}:`}
             </span>
             <div className="flex items-center gap-2">
@@ -786,7 +1092,15 @@ export const BankManager: React.FC<BankManagerProps> = ({
             <div className="sm:col-span-3">
               <div className="flex items-center justify-between mb-1">
                 <label className="text-[11px] font-black text-sky-100">
-                  Số tiền {subTab === 'chi' ? 'chi' : subTab === 'thu' ? 'thu' : 'chuyển'}
+                  {subTab === 'chi'
+                    ? 'Số tiền chi'
+                    : subTab === 'thu'
+                    ? 'Số tiền thu'
+                    : subTab === 'chovay' || transferMode === 'loan'
+                    ? loanAction === 'lend'
+                      ? 'Số tiền cho mượn'
+                      : 'Số tiền người ta trả'
+                    : 'Số tiền chuyển'}
                 </label>
                 <span className="text-[10px] text-amber-300 font-bold">
                   {autoAdd000 ? '+ 000' : ''}
@@ -811,6 +1125,10 @@ export const BankManager: React.FC<BankManagerProps> = ({
                       ? 'text-rose-600 focus:ring-rose-400'
                       : subTab === 'thu'
                       ? 'text-emerald-700 focus:ring-emerald-400'
+                      : subTab === 'chovay' || transferMode === 'loan'
+                      ? loanAction === 'lend'
+                        ? 'text-amber-500 focus:ring-amber-400'
+                        : 'text-emerald-600 focus:ring-emerald-400'
                       : 'text-blue-700 focus:ring-blue-400'
                   }`}
                 />
@@ -826,8 +1144,27 @@ export const BankManager: React.FC<BankManagerProps> = ({
             </div>
 
             {/* Cột 3: Tùy biến theo Tab */}
-            {subTab === 'chuyen' ? (
-              transferMode === 'bank' ? (
+            {subTab === 'chovay' || subTab === 'chuyen' ? (
+              subTab === 'chovay' || transferMode === 'loan' ? (
+                // Mục Cho vay: Người mượn / Người trả
+                <div className="sm:col-span-3">
+                  <label className="block text-[11px] font-black text-sky-100 mb-1">
+                    {loanAction === 'lend' ? 'Người mượn tiền:' : 'Người trả tiền:'}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ví dụ: Dì Út, Bạn Nam, Anh Tuấn..."
+                    value={borrowerName}
+                    onChange={(e) => setBorrowerName(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-white text-slate-900 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-sky-400 shadow-inner"
+                  />
+                  <span className="text-[10px] text-amber-300 block mt-0.5 italic">
+                    {loanAction === 'lend'
+                      ? '(Ghi nhận người mượn tiền)'
+                      : '(Ghi nhận người trả tiền)'}
+                  </span>
+                </div>
+              ) : transferMode === 'bank' ? (
                 // Chọn Ngân hàng nhận
                 <div className="sm:col-span-3">
                   <label className="block text-[11px] font-black text-sky-100 mb-1">
@@ -874,7 +1211,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
                     (Tiền chuyển sẽ vào Thu của ngân hàng này)
                   </span>
                 </div>
-              ) : (
+              ) : transferMode === 'saving' ? (
                 // Mục Tiết kiệm
                 <div className="sm:col-span-3">
                   <label className="block text-[11px] font-black text-sky-100 mb-1">
@@ -892,11 +1229,11 @@ export const BankManager: React.FC<BankManagerProps> = ({
                     (Sẽ hiện: Mục tiết kiệm: {savingTitle || '...'})
                   </span>
                 </div>
-              )
+              ) : null
             ) : null}
 
             {/* Cột 4: Nội Dung */}
-            <div className={subTab === 'chuyen' ? 'sm:col-span-2' : 'sm:col-span-3'}>
+            <div className={subTab === 'chuyen' || subTab === 'chovay' ? 'sm:col-span-4' : 'sm:col-span-3'}>
               <label className="block text-[11px] font-black text-sky-100 mb-1">
                 Nội Dung
               </label>
@@ -909,7 +1246,11 @@ export const BankManager: React.FC<BankManagerProps> = ({
                     ? 'Lương, Thưởng, Nhận tiền...'
                     : transferMode === 'bank'
                     ? 'Sinh hoạt, Tiêu dùng...'
-                    : 'Gửi tiết kiệm tháng 9...'
+                    : transferMode === 'saving'
+                    ? 'Gửi tiết kiệm tháng 9...'
+                    : loanAction === 'lend'
+                    ? 'Cho dì mượn việc gia đình...'
+                    : 'Dì trả đợt 1, Trả nợ...'
                 }
                 value={inputDescription}
                 onChange={(e) => setInputDescription(e.target.value)}
@@ -921,11 +1262,22 @@ export const BankManager: React.FC<BankManagerProps> = ({
             </div>
 
             {/* Cột 4b: Danh Mục (CHỖ MÀU VÀNG THEO YÊU CẦU ĐỂ ĐỒNG NHẤT KHI UP ẢNH) */}
-            {subTab !== 'chuyen' && (
+            {subTab !== 'chuyen' && subTab !== 'chovay' && (
               <div className="sm:col-span-2">
-                <label className="block text-[11px] font-black text-sky-100 mb-1">
-                  Danh Mục
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-black text-sky-100">
+                    Danh Mục
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsCategoryModalOpen(true)}
+                    className="text-[10px] font-extrabold text-amber-300 hover:text-white flex items-center gap-1 transition-colors cursor-pointer bg-sky-950/60 hover:bg-sky-800 px-1.5 py-0.5 rounded border border-amber-400/40 shadow-2xs"
+                    title="Mục sửa Danh mục, thêm hoặc bớt"
+                  >
+                    <Settings className="w-2.5 h-2.5 text-amber-300" />
+                    <span>Sửa/Thêm</span>
+                  </button>
+                </div>
                 <select
                   value={
                     selectedCategoryId &&
@@ -935,7 +1287,13 @@ export const BankManager: React.FC<BankManagerProps> = ({
                       ? selectedCategoryId
                       : categories.filter((c) => c.type === (subTab === 'thu' ? 'income' : 'expense'))[0]?.id || ''
                   }
-                  onChange={(e) => setSelectedCategoryId(e.target.value)}
+                  onChange={(e) => {
+                    if (e.target.value === '__manage_categories__') {
+                      setIsCategoryModalOpen(true);
+                    } else {
+                      setSelectedCategoryId(e.target.value);
+                    }
+                  }}
                   className="w-full px-2.5 py-2 rounded-xl bg-white text-slate-900 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-sky-400 shadow-inner"
                 >
                   {categories
@@ -945,22 +1303,29 @@ export const BankManager: React.FC<BankManagerProps> = ({
                         {cat.name}
                       </option>
                     ))}
+                  <option value="__manage_categories__" className="text-amber-800 font-bold bg-amber-50">
+                    ⚙️ + Sửa / Thêm / Bớt Danh Mục...
+                  </option>
                 </select>
                 <span className="text-[10px] text-sky-300 block mt-0.5 italic">
-                  (Đồng nhất khi up ảnh)
+                  (Bấm Sửa/Thêm để quản lý)
                 </span>
               </div>
             )}
 
             {/* Cột 5: Nút Ghi */}
-            <div className="sm:col-span-2">
+            <div className={subTab === 'chuyen' || subTab === 'chovay' ? 'sm:col-span-3' : 'sm:col-span-2'}>
               <button
                 type="submit"
-                className={`w-full py-2 px-3 rounded-xl text-xs font-black text-white shadow-md transition-all flex items-center justify-center gap-1 hover:scale-102 active:scale-98 ${
+                className={`w-full py-2 px-3 rounded-xl text-xs font-black text-white shadow-md transition-all flex items-center justify-center gap-1 hover:scale-102 active:scale-98 cursor-pointer ${
                   subTab === 'chi'
                     ? 'bg-rose-600 hover:bg-rose-500 ring-2 ring-rose-400/50'
                     : subTab === 'thu'
                     ? 'bg-emerald-600 hover:bg-emerald-500 ring-2 ring-emerald-400/50'
+                    : subTab === 'chovay' || transferMode === 'loan'
+                    ? loanAction === 'lend'
+                      ? 'bg-amber-600 hover:bg-amber-500 ring-2 ring-amber-400/50'
+                      : 'bg-emerald-600 hover:bg-emerald-500 ring-2 ring-emerald-400/50'
                     : 'bg-blue-600 hover:bg-blue-500 ring-2 ring-blue-400/50'
                 }`}
               >
@@ -970,6 +1335,10 @@ export const BankManager: React.FC<BankManagerProps> = ({
                     ? 'Ghi Chi'
                     : subTab === 'thu'
                     ? 'Ghi Thu'
+                    : subTab === 'chovay' || transferMode === 'loan'
+                    ? loanAction === 'lend'
+                      ? 'Ghi Cho Mượn'
+                      : 'Ghi Nhận Trả'
                     : transferMode === 'bank'
                     ? 'Chuyển Khoản'
                     : 'Gửi Tiết Kiệm'}
@@ -1003,6 +1372,12 @@ export const BankManager: React.FC<BankManagerProps> = ({
                       ? `Chưa có giao dịch chi nào tại ${activeAccount?.name} trong tháng ${monthNum}.`
                       : subTab === 'thu'
                       ? `Chưa có giao dịch thu nào tại ${activeAccount?.name} trong tháng ${monthNum}.`
+                      : subTab === 'chovay' || transferMode === 'loan'
+                      ? loanFilter === 'lend'
+                        ? `Chưa có khoản cho mượn nào tại ${activeAccount?.name} trong tháng ${monthNum}.`
+                        : loanFilter === 'repay'
+                        ? `Chưa có khoản người ta trả tiền mượn nào tại ${activeAccount?.name} trong tháng ${monthNum}.`
+                        : `Chưa có giao dịch cho vay hoặc nhận trả nào tại ${activeAccount?.name} trong tháng ${monthNum}.`
                       : transferMode === 'bank'
                       ? `Chưa có giao dịch chuyển liên ngân hàng nào từ ${activeAccount?.name}.`
                       : `Chưa có giao dịch chuyển vào Mục Tiết Kiệm nào từ ${activeAccount?.name}.`}
@@ -1086,9 +1461,30 @@ export const BankManager: React.FC<BankManagerProps> = ({
                     );
                   }
 
+                  // Kiểm tra giao dịch Cho vay / Mượn nợ
+                  const isLoanTx =
+                    tx.tags?.includes('loan') ||
+                    tx.tags?.includes('lend') ||
+                    tx.tags?.includes('repay') ||
+                    /mượn|cho vay|trả nợ|thu nợ|cho mượn|vay/i.test(tx.description || '') ||
+                    /mượn|cho vay|trả nợ|thu nợ|cho mượn|vay/i.test(tx.note || '');
+                  const isLendTx =
+                    isLoanTx &&
+                    (tx.tags?.includes('lend') ||
+                      (tx.type === 'expense' && !tx.tags?.includes('repay')) ||
+                      /cho mượn|cho vay/i.test(tx.description || ''));
+                  const isRepayTx =
+                    isLoanTx &&
+                    (tx.tags?.includes('repay') ||
+                      (tx.type === 'income' && !tx.tags?.includes('lend')) ||
+                      /trả|thu nợ|thu hồi/i.test(tx.description || ''));
+
                   // Determine display styling
                   const isIncoming =
-                    subTab === 'thu' || (tx.type === 'transfer' && tx.toAccountId === activeAccountId);
+                    subTab === 'thu' ||
+                    isRepayTx ||
+                    (tx.type === 'income' && !isLendTx) ||
+                    (tx.type === 'transfer' && tx.toAccountId === activeAccountId);
                   const isSavingInThu = subTab === 'thu' && isSavingTx;
 
                   return (
@@ -1116,6 +1512,10 @@ export const BankManager: React.FC<BankManagerProps> = ({
                             className={`font-black text-xs px-2.5 py-1 rounded-md tracking-tight transition-all group-hover/amtbtn:ring-2 group-hover/amtbtn:ring-white/50 group-hover/amtbtn:scale-105 ${
                               isSavingInThu
                                 ? 'bg-teal-500/20 text-teal-300 border border-teal-500/30'
+                                : isLendTx
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                : isRepayTx
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                                 : isIncoming
                                 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                                 : subTab === 'chi'
@@ -1140,10 +1540,21 @@ export const BankManager: React.FC<BankManagerProps> = ({
 
                       {/* Cột 4: Nội Dung */}
                       <td className="py-2.5 px-4">
-                        <div className="font-semibold text-white flex items-center gap-1.5">
+                        <div className="font-semibold text-white flex flex-wrap items-center gap-1.5">
                           {isSavingInThu && (
                             <PiggyBank className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                           )}
+                          {isLendTx ? (
+                            <span className="font-extrabold text-[10px] text-amber-200 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-500/40 flex items-center gap-1 shrink-0">
+                              <ArrowUpRight className="w-3 h-3 text-rose-400" />
+                              Mục Cho mượn
+                            </span>
+                          ) : isRepayTx ? (
+                            <span className="font-extrabold text-[10px] text-emerald-200 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/40 flex items-center gap-1 shrink-0">
+                              <ArrowDownLeft className="w-3 h-3 text-emerald-400" />
+                              Mục Trả
+                            </span>
+                          ) : null}
                           <span>{tx.description}</span>
                         </div>
 
@@ -1166,7 +1577,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
                             </>
                           ) : null}
 
-                          {cat && !isSavingTx && (
+                          {cat && !isSavingTx && !isLoanTx && (
                             <span className="text-sky-400">• {cat.name}</span>
                           )}
                           {tx.note && (
@@ -1370,6 +1781,17 @@ export const BankManager: React.FC<BankManagerProps> = ({
             batch.forEach((item) => onAddTransaction(item));
           }
         }}
+      />
+
+      {/* Category Manager Modal (Mục Sửa Danh mục, Thêm hoặc Bớt) */}
+      <CategoryManagerModal
+        isOpen={isCategoryModalOpen}
+        onClose={() => setIsCategoryModalOpen(false)}
+        categories={categories}
+        transactions={transactions}
+        onAddCategory={(cat) => onAddCategory && onAddCategory(cat)}
+        onEditCategory={(cat) => onEditCategory && onEditCategory(cat)}
+        onDeleteCategory={(catId) => onDeleteCategory && onDeleteCategory(catId)}
       />
     </div>
   );

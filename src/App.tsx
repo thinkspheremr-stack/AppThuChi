@@ -869,6 +869,9 @@ export default function App() {
               onEditTransaction={(updatedTx) => handleSaveTransaction(updatedTx, updatedTx.id)}
               onAddBatchTransactions={handleSaveBatchTransactions}
               onDeleteTransaction={handleDeleteTransaction}
+              debts={debts}
+              onAddDebt={handleAddDebt}
+              onRecordPayment={handleRecordDebtPayment}
             />
 
             {/* 2. Transactions List */}

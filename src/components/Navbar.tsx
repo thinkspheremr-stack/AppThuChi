@@ -18,6 +18,7 @@ import {
   Save,
   Check,
   ShieldCheck,
+  Tag,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -31,6 +32,7 @@ interface NavbarProps {
   lastAutoSavedAt?: string | null;
   onManualSave?: () => void;
   onOpenBackupModal: () => void;
+  onOpenCategoryModal?: () => void;
   onChangeMonth: (month: string) => void;
   onOpenAddModal: (type?: 'expense' | 'income' | 'transfer') => void;
   onOpenReminderModal: () => void;
@@ -54,6 +56,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   lastAutoSavedAt,
   onManualSave,
   onOpenBackupModal,
+  onOpenCategoryModal,
   onChangeMonth,
   onOpenAddModal,
   onOpenReminderModal,
@@ -282,6 +285,19 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </button>
 
+            {/* Quản Lý Danh Mục (Sửa, thêm, bớt) Button */}
+            {onOpenCategoryModal && (
+              <button
+                type="button"
+                onClick={onOpenCategoryModal}
+                className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 text-xs font-bold transition-all shadow-2xs cursor-pointer"
+                title="Quản lý danh mục: Sửa tên, màu, thêm hoặc bớt danh mục"
+              >
+                <Tag className="w-3.5 h-3.5 text-amber-500" />
+                <span>Danh Mục</span>
+              </button>
+            )}
+
             {/* Streak & Reminder Bell */}
             <button
               onClick={onOpenReminderModal}
@@ -338,6 +354,19 @@ export const Navbar: React.FC<NavbarProps> = ({
                       <Cloud className="w-4 h-4 text-emerald-600" />
                       {currentUser ? 'Quản lý sao lưu Gmail' : 'Đăng nhập Gmail sao lưu'}
                     </button>
+
+                    {onOpenCategoryModal && (
+                      <button
+                        onClick={() => {
+                          setIsMenuOpen(false);
+                          onOpenCategoryModal();
+                        }}
+                        className="w-full px-4 py-2 text-left hover:bg-slate-50 flex items-center gap-2 text-slate-800 font-bold"
+                      >
+                        <Tag className="w-4 h-4 text-amber-500" />
+                        Quản lý danh mục (Sửa/Thêm/Bớt)
+                      </button>
+                    )}
 
                     <button
                       onClick={() => {

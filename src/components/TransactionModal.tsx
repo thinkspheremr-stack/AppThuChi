@@ -24,6 +24,7 @@ interface TransactionModalProps {
   initialType?: TransactionType;
   editingTransaction?: Transaction | null;
   onSave: (transactionData: Omit<Transaction, 'id' | 'createdAt'>, editingId?: string) => void;
+  onOpenCategoryManager?: () => void;
 }
 
 export const TransactionModal: React.FC<TransactionModalProps> = ({
@@ -34,6 +35,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   initialType = 'expense',
   editingTransaction,
   onSave,
+  onOpenCategoryManager,
 }) => {
   const [type, setType] = useState<TransactionType>(initialType);
   const [amount, setAmount] = useState<number | ''>('');
@@ -351,10 +353,21 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
           {/* Category Selector (For Expense & Income) */}
           {type !== 'transfer' && (
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1.5 flex items-center gap-1.5">
-                <Tag className="w-3.5 h-3.5 text-slate-500" />
-                Danh mục phân loại <span className="text-rose-500">*</span>
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
+                  <Tag className="w-3.5 h-3.5 text-slate-500" />
+                  Danh mục phân loại <span className="text-rose-500">*</span>
+                </label>
+                {onOpenCategoryManager && (
+                  <button
+                    type="button"
+                    onClick={onOpenCategoryManager}
+                    className="text-[11px] font-bold text-sky-600 hover:text-sky-800 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    ⚙️ Sửa / Thêm danh mục
+                  </button>
+                )}
+              </div>
               <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-40 overflow-y-auto p-1.5 bg-slate-50 rounded-xl border border-slate-200">
                 {filteredCategories.map((cat) => {
                   const isSelected = categoryId === cat.id;

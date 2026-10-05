@@ -3,7 +3,8 @@ import { Account, Category, Transaction } from '../types';
 import { YearlyFinancialReportTable } from './YearlyFinancialReportTable';
 import { FinancialReportTable } from './FinancialReportTable';
 import { MonthlyCharts } from './MonthlyCharts';
-import { Calendar, BarChart3, Layers, CalendarDays, ArrowRight } from 'lucide-react';
+import { CategoryTimelineReport } from './CategoryTimelineReport';
+import { Calendar, BarChart3, Layers, CalendarDays, ArrowRight, PieChart } from 'lucide-react';
 
 interface GeneralReportSheetProps {
   accounts: Account[];
@@ -15,6 +16,7 @@ interface GeneralReportSheetProps {
   onChangeMonth: (month: string) => void;
   onOpenTransfer?: () => void;
   onOpenSalaryAllocation?: () => void;
+  onOpenCategoryManager?: () => void;
 }
 
 export const GeneralReportSheet: React.FC<GeneralReportSheetProps> = ({
@@ -27,14 +29,15 @@ export const GeneralReportSheet: React.FC<GeneralReportSheetProps> = ({
   onChangeMonth,
   onOpenTransfer,
   onOpenSalaryAllocation,
+  onOpenCategoryManager,
 }) => {
-  const [activeView, setActiveView] = useState<'all' | 'year' | 'month' | 'charts'>('all');
+  const [activeView, setActiveView] = useState<'all' | 'year' | 'month' | 'charts' | 'category'>('all');
   const [yearStr, monthStr] = currentMonth.split('-');
 
   return (
     <div className="space-y-6">
       {/* ========================================================================= */}
-      {/* SHEET HEADER & 3-TABLE NAVIGATION BAR                                     */}
+      {/* SHEET HEADER & 4-TABLE NAVIGATION BAR                                     */}
       {/* ========================================================================= */}
       <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -47,11 +50,11 @@ export const GeneralReportSheet: React.FC<GeneralReportSheetProps> = ({
             </h1>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Bao gồm 3 phần tổng hợp: <strong>1. Năm {yearStr}</strong> • <strong>2. Tháng {monthStr}/{yearStr}</strong> • <strong>3. Báo Cáo & Biểu Đồ</strong>
+            Bao gồm 4 phần tổng hợp: <strong>1. Năm {yearStr}</strong> • <strong>2. Tháng {monthStr}/{yearStr}</strong> • <strong>3. Biểu Đồ</strong> • <strong>4. Báo Cáo Danh Mục</strong>
           </p>
         </div>
 
-        {/* 3-Section Selector */}
+        {/* 4-Section Selector */}
         <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-xl border border-slate-200/80 flex-wrap">
           <button
             type="button"
@@ -62,7 +65,7 @@ export const GeneralReportSheet: React.FC<GeneralReportSheetProps> = ({
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            Tất Cả 3 Bảng
+            Tất Cả Bảng
           </button>
 
           <button
@@ -101,7 +104,20 @@ export const GeneralReportSheet: React.FC<GeneralReportSheetProps> = ({
             }`}
           >
             <BarChart3 className="w-3.5 h-3.5" />
-            <span>3. Báo Cáo & Biểu Đồ</span>
+            <span>3. Biểu Đồ</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveView('category')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              activeView === 'category'
+                ? 'bg-amber-600 text-white shadow-xs font-black'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <PieChart className="w-3.5 h-3.5" />
+            <span>4. Báo Cáo Danh Mục</span>
           </button>
         </div>
       </div>
@@ -176,6 +192,30 @@ export const GeneralReportSheet: React.FC<GeneralReportSheetProps> = ({
             accounts={accounts}
             categories={categories}
             selectedAccountId={selectedAccountId}
+          />
+        </section>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 4. BÁO CÁO THEO DANH MỤC VỚI 1 HOẶC NHIỀU NGÂN HÀNG & THEO THỜI GIAN       */}
+      {/* ========================================================================= */}
+      {(activeView === 'all' || activeView === 'category') && (
+        <section id="section-category" className="scroll-mt-4">
+          <div className="flex items-center gap-2 mb-2 px-1">
+            <span className="w-6 h-6 rounded-lg bg-amber-600 text-white text-xs font-black flex items-center justify-center">
+              4
+            </span>
+            <span className="text-xs font-black text-amber-950 uppercase tracking-wider">
+              Báo Cáo Theo Danh Mục - 1 Hoặc Nhiều Ngân Hàng & Theo Dòng Thời Gian
+            </span>
+          </div>
+          <CategoryTimelineReport
+            accounts={accounts}
+            transactions={transactions}
+            categories={categories}
+            currentMonth={currentMonth}
+            onSelectAccount={onSelectAccount}
+            onOpenCategoryManager={onOpenCategoryManager}
           />
         </section>
       )}
