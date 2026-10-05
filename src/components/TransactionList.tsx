@@ -18,6 +18,9 @@ import {
   ChevronUp,
   Calendar,
   Layers,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from 'lucide-react';
 
 interface TransactionListProps {
@@ -28,6 +31,7 @@ interface TransactionListProps {
   selectedAccountId: string | null;
   onEditTransaction: (transaction: Transaction) => void;
   onDeleteTransaction: (id: string) => void;
+  onUpdateTransactions?: (transactions: Transaction[]) => void;
   onExportCSV: () => void;
 }
 
@@ -39,6 +43,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   selectedAccountId,
   onEditTransaction,
   onDeleteTransaction,
+  onUpdateTransactions,
   onExportCSV,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -57,7 +62,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   const categoryMap = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
 
   // =========================================================================
-  // 1. TÍNH SỐ TIỀN CÒN LẠI (RUNNING BALANCE) TỪ ĐẦU ĐẾN CUỐI
+  // 1. TÍNH SỐ TIỀN CÒN LẠI (RUNNING BALANCE) TÔN TRỌNG THỨ TỰ NGƯỜI DÙNG SẮP XẾP
   // =========================================================================
   const balanceAfterMap = useMemo(() => {
     const runningPerAccount: Record<string, number> = {};
@@ -67,6 +72,12 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
     const allSortedAsc = [...transactions].sort((a, b) => {
       if (a.date !== b.date) return a.date.localeCompare(b.date);
+      // Trong cùng 1 ngày: tôn trọng thứ tự order người dùng thiết lập
+      if (a.order !== undefined && b.order !== undefined) {
+        return a.order - b.order;
+      }
+      if (a.order !== undefined) return -1;
+      if (b.order !== undefined) return 1;
       if ((a.time || '') !== (b.time || '')) return (a.time || '').localeCompare(b.time || '');
       return (a.createdAt || 0) - (b.createdAt || 0);
     });
@@ -139,7 +150,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   }, [transactions, typeFilter, accountFilter, categoryFilter, searchTerm, categoryMap]);
 
   // =========================================================================
-  // 3. NHÓM THEO THÁNG: THÁNG HIỆN TẠI & CÁC THÁNG TRƯỚC (THEO ĐÚNG HÌNH ẢNH)
+  // 3. NHÓM THEO THÁNG & NGÀY (SẮP XẾP THEO THỨ TỰ ORDER / TIME)
   // =========================================================================
   const monthGroups = useMemo(() => {
     const groups: Record<string, Transaction[]> = {};
@@ -157,22 +168,32 @@ export const TransactionList: React.FC<TransactionListProps> = ({
       groups[mKey].push(t);
     });
 
-    // Sắp xếp các tháng giảm dần (mới nhất lên trước: Tháng 10, Tháng 9, Tháng 8...)
+    // Sắp xếp các tháng giảm dần (mới nhất lên trước)
     const sortedKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
 
     return sortedKeys.map((mKey) => {
       const txs = groups[mKey] || [];
-      // Sắp xếp ngày giảm dần, thời gian giảm dần
-      txs.sort((a, b) => {
-        if (a.date !== b.date) return b.date.localeCompare(a.date);
-        return (b.time || '').localeCompare(a.time || '');
-      });
 
       // Nhóm theo ngày
       const dateGroups: Record<string, Transaction[]> = {};
       txs.forEach((t) => {
         if (!dateGroups[t.date]) dateGroups[t.date] = [];
         dateGroups[t.date].push(t);
+      });
+
+      // Sắp xếp các giao dịch trong cùng 1 ngày theo order (nếu có), hoặc time desc, createdAt desc
+      Object.keys(dateGroups).forEach((d) => {
+        dateGroups[d].sort((a, b) => {
+          if (a.order !== undefined && b.order !== undefined) {
+            return a.order - b.order;
+          }
+          if (a.order !== undefined) return -1;
+          if (b.order !== undefined) return 1;
+          if ((b.time || '') !== (a.time || '')) {
+            return (b.time || '').localeCompare(a.time || '');
+          }
+          return (b.createdAt || 0) - (a.createdAt || 0);
+        });
       });
 
       const totalExpense = txs
@@ -204,15 +225,12 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   }, [filteredTransactions, currentMonth]);
 
   // =========================================================================
-  // 4. TRẠNG THÁI MỞ / ĐÓNG:
-  // "tháng hiện tại --> xuất hiện"
-  // "còn tháng trước --> thì ẩn hết, khi ấn vào mới hiện ra (như hình ảnh)"
+  // 4. TRẠNG THÁI MỞ / ĐÓNG ACCORDION THÁNG
   // =========================================================================
   const [expandedMonths, setExpandedMonths] = useState<Record<string, boolean>>(() => ({
     [currentMonth]: true, // Tháng hiện tại mặc định MỞ
   }));
 
-  // Đảm bảo currentMonth luôn mở khi chuyển tháng
   useEffect(() => {
     setExpandedMonths((prev) => ({
       ...prev,
@@ -220,7 +238,6 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     }));
   }, [currentMonth]);
 
-  // Tự động mở các tháng có kết quả tìm kiếm nếu người dùng gõ tìm kiếm
   useEffect(() => {
     if (searchTerm.trim()) {
       const searchExpanded: Record<string, boolean> = {};
@@ -250,6 +267,95 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     setExpandedMonths({ [currentMonth]: true });
   };
 
+  // =========================================================================
+  // 5. TÍNH NĂNG THAY ĐỔI THỨ TỰ GIAO DỊCH TRONG CÙNG 1 NGÀY (LÊN / XUỐNG / ĐẢO)
+  // =========================================================================
+  const handleMoveTransaction = (txId: string, direction: 'up' | 'down') => {
+    const targetTx = transactions.find((t) => t.id === txId);
+    if (!targetTx || !onUpdateTransactions) return;
+
+    const dateStr = targetTx.date;
+    // Lấy tất cả giao dịch trong ngày đó theo thứ tự đang hiển thị
+    const dayTxs = transactions
+      .filter((t) => t.date === dateStr)
+      .sort((a, b) => {
+        if (a.order !== undefined && b.order !== undefined) {
+          return a.order - b.order;
+        }
+        if (a.order !== undefined) return -1;
+        if (b.order !== undefined) return 1;
+        if ((b.time || '') !== (a.time || '')) {
+          return (b.time || '').localeCompare(a.time || '');
+        }
+        return (b.createdAt || 0) - (a.createdAt || 0);
+      });
+
+    const currentIndex = dayTxs.findIndex((t) => t.id === txId);
+    if (currentIndex === -1) return;
+
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= dayTxs.length) return;
+
+    // Hoán đổi vị trí
+    const reordered = [...dayTxs];
+    const [moved] = reordered.splice(currentIndex, 1);
+    reordered.splice(targetIndex, 0, moved);
+
+    // Gán order mới cố định: 0, 1, 2...
+    const orderMap = new Map<string, number>();
+    reordered.forEach((t, idx) => {
+      orderMap.set(t.id, idx);
+    });
+
+    const nextTransactions = transactions.map((t) => {
+      if (orderMap.has(t.id)) {
+        return {
+          ...t,
+          order: orderMap.get(t.id),
+        };
+      }
+      return t;
+    });
+
+    onUpdateTransactions(nextTransactions);
+  };
+
+  const handleReverseDayOrder = (dateStr: string) => {
+    if (!onUpdateTransactions) return;
+
+    const dayTxs = transactions
+      .filter((t) => t.date === dateStr)
+      .sort((a, b) => {
+        if (a.order !== undefined && b.order !== undefined) {
+          return a.order - b.order;
+        }
+        if (a.order !== undefined) return -1;
+        if (b.order !== undefined) return 1;
+        if ((b.time || '') !== (a.time || '')) {
+          return (b.time || '').localeCompare(a.time || '');
+        }
+        return (b.createdAt || 0) - (a.createdAt || 0);
+      });
+
+    const reversed = [...dayTxs].reverse();
+    const orderMap = new Map<string, number>();
+    reversed.forEach((t, idx) => {
+      orderMap.set(t.id, idx);
+    });
+
+    const nextTransactions = transactions.map((t) => {
+      if (orderMap.has(t.id)) {
+        return {
+          ...t,
+          order: orderMap.get(t.id),
+        };
+      }
+      return t;
+    });
+
+    onUpdateTransactions(nextTransactions);
+  };
+
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-4 sm:p-5">
       {/* Header */}
@@ -257,7 +363,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
         <div>
           <h3 className="text-lg font-bold text-slate-800">Danh Sách Giao Dịch</h3>
           <p className="text-xs text-slate-500 mt-0.5">
-            Tổng cộng {filteredTransactions.length} giao dịch qua các tháng
+            Tổng cộng {filteredTransactions.length} giao dịch qua các tháng • Có thể bấm <strong>▲ / ▼</strong> để chỉnh thứ tự các khoản trong ngày
           </p>
         </div>
 
@@ -362,7 +468,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* 5. DANH SÁCH THEO THÁNG (ACCORDION THÁNG HIỆN TẠI & THÁNG TRƯỚC)          */}
+      {/* 6. DANH SÁCH THEO THÁNG (ACCORDION THÁNG HIỆN TẠI & THÁNG TRƯỚC)          */}
       {/* ========================================================================= */}
       {monthGroups.length === 0 ? (
         <div className="text-center py-12 text-slate-400">
@@ -383,9 +489,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                     : 'border-slate-200 shadow-2xs hover:border-slate-300'
                 }`}
               >
-                {/* ================================================================= */}
-                {/* THANH TIÊU ĐỀ THÁNG (NHƯ HÌNH BẢN VẼ: KHỐI THÁNG 10, THÁNG 9, 8...)*/}
-                {/* ================================================================= */}
+                {/* THANH TIÊU ĐỀ THÁNG */}
                 <button
                   type="button"
                   onClick={() => toggleMonth(group.monthKey)}
@@ -458,7 +562,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                     </div>
                   </div>
 
-                  {/* Right: Mũi tên Dropdown lớn (Đúng như mũi tên xanh trên hình ảnh vẽ) */}
+                  {/* Right: Mũi tên Dropdown lớn */}
                   <div className="flex items-center gap-2">
                     <span
                       className={`text-xs font-bold hidden sm:inline ${
@@ -479,9 +583,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                   </div>
                 </button>
 
-                {/* ================================================================= */}
-                {/* NỘI DUNG GIAO DỊCH TRONG THÁNG (KHI EXPANDED THÌ HIỆN RA)         */}
-                {/* ================================================================= */}
+                {/* NỘI DUNG GIAO DỊCH TRONG THÁNG */}
                 {isExpanded && (
                   <div className="p-3 sm:p-4 bg-white space-y-4 animate-in fade-in duration-150">
                     {group.dateKeys.length === 0 ? (
@@ -501,8 +603,21 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                         return (
                           <div key={dateStr} className="space-y-1.5">
                             {/* Date header */}
-                            <div className="flex items-center justify-between text-xs font-semibold px-2 py-1 bg-slate-100/70 rounded-lg text-slate-600">
-                              <span>{formatFriendlyDate(dateStr)}</span>
+                            <div className="flex items-center justify-between text-xs font-semibold px-2.5 py-1.5 bg-slate-100/80 rounded-lg text-slate-700">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-slate-800">{formatFriendlyDate(dateStr)}</span>
+                                {dayTxs.length > 1 && onUpdateTransactions && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleReverseDayOrder(dateStr)}
+                                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 px-2 py-0.5 rounded shadow-2xs transition-colors cursor-pointer"
+                                    title="Đảo ngược thứ tự các giao dịch trong ngày này"
+                                  >
+                                    <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                                    <span>Đảo thứ tự ngày</span>
+                                  </button>
+                                )}
+                              </div>
                               <div className="flex items-center gap-3 text-[11px]">
                                 {dayExpense > 0 && (
                                   <span className="text-rose-600 font-bold">
@@ -519,7 +634,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
                             {/* Day Items */}
                             <div className="divide-y divide-slate-100">
-                              {dayTxs.map((tx) => {
+                              {dayTxs.map((tx, txIndex) => {
                                 const acc = accountMap.get(tx.accountId);
                                 const toAcc = tx.toAccountId
                                   ? accountMap.get(tx.toAccountId)
@@ -538,6 +653,9 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                                     balanceAccountLabel = toAcc?.name || 'Tài khoản nhận';
                                   }
                                 }
+
+                                const isFirstInDay = txIndex === 0;
+                                const isLastInDay = txIndex === dayTxs.length - 1;
 
                                 return (
                                   <div
@@ -705,27 +823,77 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                                         </div>
                                       </div>
 
-                                      {/* Cột 3: Thao tác Sửa / Xóa */}
-                                      <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
-                                        <button
-                                          type="button"
-                                          onClick={() => onEditTransaction(tx)}
-                                          className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/70 rounded-lg transition-colors cursor-pointer"
-                                          title="Sửa giao dịch"
-                                        >
-                                          <Edit3 className="w-3.5 h-3.5" />
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            onDeleteTransaction(tx.id);
-                                          }}
-                                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                                          title="Xóa giao dịch"
-                                        >
-                                          <Trash2 className="w-3.5 h-3.5" />
-                                        </button>
+                                      {/* Cột 3: Nút Di chuyển Thứ tự Lên / Xuống & Thao tác Sửa / Xóa */}
+                                      <div className="flex items-center gap-1.5">
+                                        {/* Nút Di chuyển Lên / Xuống trong ngày */}
+                                        {dayTxs.length > 1 && onUpdateTransactions && (
+                                          <div className="flex items-center bg-slate-100/90 rounded-lg p-0.5 border border-slate-200">
+                                            <button
+                                              type="button"
+                                              disabled={isFirstInDay}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleMoveTransaction(tx.id, 'up');
+                                              }}
+                                              className={`p-1 rounded transition-all ${
+                                                isFirstInDay
+                                                  ? 'text-slate-300 cursor-not-allowed'
+                                                  : 'text-slate-600 hover:text-slate-950 hover:bg-white cursor-pointer shadow-2xs active:scale-95'
+                                              }`}
+                                              title={
+                                                isFirstInDay
+                                                  ? 'Đã ở vị trí đầu tiên trong ngày'
+                                                  : 'Di chuyển lên trên (thực hiện trước)'
+                                              }
+                                            >
+                                              <ArrowUp className="w-3.5 h-3.5 stroke-[2.5]" />
+                                            </button>
+
+                                            <button
+                                              type="button"
+                                              disabled={isLastInDay}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleMoveTransaction(tx.id, 'down');
+                                              }}
+                                              className={`p-1 rounded transition-all ${
+                                                isLastInDay
+                                                  ? 'text-slate-300 cursor-not-allowed'
+                                                  : 'text-slate-600 hover:text-slate-950 hover:bg-white cursor-pointer shadow-2xs active:scale-95'
+                                              }`}
+                                              title={
+                                                isLastInDay
+                                                  ? 'Đã ở vị trí cuối cùng trong ngày'
+                                                  : 'Di chuyển xuống dưới (thực hiện sau)'
+                                              }
+                                            >
+                                              <ArrowDown className="w-3.5 h-3.5 stroke-[2.5]" />
+                                            </button>
+                                          </div>
+                                        )}
+
+                                        {/* Nút Sửa / Xóa */}
+                                        <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
+                                          <button
+                                            type="button"
+                                            onClick={() => onEditTransaction(tx)}
+                                            className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/70 rounded-lg transition-colors cursor-pointer"
+                                            title="Sửa giao dịch"
+                                          >
+                                            <Edit3 className="w-3.5 h-3.5" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              onDeleteTransaction(tx.id);
+                                            }}
+                                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                            title="Xóa giao dịch"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
                                       </div>
                                     </div>
                                   </div>

@@ -511,6 +511,12 @@ export default function App() {
     triggerAutoBackup(rawAccounts, nextTransactions, categories, reminders);
   };
 
+  const handleUpdateTransactions = (nextTransactions: Transaction[]) => {
+    setTransactions(nextTransactions);
+    saveTransactions(nextTransactions);
+    triggerAutoBackup(rawAccounts, nextTransactions, categories, reminders);
+  };
+
   // --- Handlers for Accounts ---
   const handleAddAccount = (accData: Omit<Account, 'id' | 'balance'>) => {
     const newAcc: Account = {
@@ -868,6 +874,7 @@ export default function App() {
               selectedAccountId={selectedAccountId}
               onEditTransaction={handleEditTransactionClick}
               onDeleteTransaction={handleDeleteTransaction}
+              onUpdateTransactions={handleUpdateTransactions}
               onExportCSV={handleExportCSV}
             />
           </>

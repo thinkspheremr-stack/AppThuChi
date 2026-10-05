@@ -36,6 +36,7 @@ export interface Transaction {
   description: string;
   note?: string;
   tags?: string[];
+  order?: number; // Thứ tự sắp xếp tùy chỉnh trong ngày
   createdAt: number;
 }
 
