@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Account, AccountType, Category, Transaction } from '../types';
-import { formatCurrency, formatFriendlyDate } from '../utils/formatters';
+import { formatCurrency, formatFriendlyDate, compareTransactionsSameDay } from '../utils/formatters';
 import { CategoryIcon } from './CategoryIcon';
 import { ReceiptScannerModal } from './ReceiptScannerModal';
 import {
@@ -192,8 +192,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
       )
       .sort((a, b) => {
         if (a.date !== b.date) return a.date.localeCompare(b.date);
-        if ((a.time || '') !== (b.time || '')) return (a.time || '').localeCompare(b.time || '');
-        return (a.createdAt || 0) - (b.createdAt || 0);
+        return compareTransactionsSameDay(a, b);
       });
 
     let running = activeAccount.initialBalance || 0;
@@ -395,6 +394,10 @@ export const BankManager: React.FC<BankManagerProps> = ({
     // subTab === 'chuyen'
     currentList = transferMode === 'bank' ? bankTransfersOut : savingsTransfersOut;
   }
+  currentList = [...currentList].sort((a, b) => {
+    if (a.date !== b.date) return b.date.localeCompare(a.date);
+    return compareTransactionsSameDay(a, b);
+  });
 
   return (
     <div className="space-y-4 mb-6">

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Account, Category, Transaction, TransactionType } from '../types';
-import { formatCurrency, formatFriendlyDate } from '../utils/formatters';
+import { formatCurrency, formatFriendlyDate, compareTransactionsSameDay } from '../utils/formatters';
 import { CategoryIcon } from './CategoryIcon';
 import {
   Search,
@@ -72,14 +72,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
     const allSortedAsc = [...transactions].sort((a, b) => {
       if (a.date !== b.date) return a.date.localeCompare(b.date);
-      // Trong cùng 1 ngày: tôn trọng thứ tự order người dùng thiết lập
-      if (a.order !== undefined && b.order !== undefined) {
-        return a.order - b.order;
-      }
-      if (a.order !== undefined) return -1;
-      if (b.order !== undefined) return 1;
-      if ((a.time || '') !== (b.time || '')) return (a.time || '').localeCompare(b.time || '');
-      return (a.createdAt || 0) - (b.createdAt || 0);
+      return compareTransactionsSameDay(a, b);
     });
 
     const map = new Map<
@@ -181,19 +174,9 @@ export const TransactionList: React.FC<TransactionListProps> = ({
         dateGroups[t.date].push(t);
       });
 
-      // Sắp xếp các giao dịch trong cùng 1 ngày theo order (nếu có), hoặc time desc, createdAt desc
+      // Sắp xếp các giao dịch trong cùng 1 ngày theo đúng thứ tự diễn ra
       Object.keys(dateGroups).forEach((d) => {
-        dateGroups[d].sort((a, b) => {
-          if (a.order !== undefined && b.order !== undefined) {
-            return a.order - b.order;
-          }
-          if (a.order !== undefined) return -1;
-          if (b.order !== undefined) return 1;
-          if ((b.time || '') !== (a.time || '')) {
-            return (b.time || '').localeCompare(a.time || '');
-          }
-          return (b.createdAt || 0) - (a.createdAt || 0);
-        });
+        dateGroups[d].sort((a, b) => compareTransactionsSameDay(a, b));
       });
 
       const totalExpense = txs
@@ -276,20 +259,10 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     if (!targetTx || !onUpdateTransactions) return;
 
     const dateStr = targetTx.date;
-    // Lấy tất cả giao dịch trong ngày đó theo thứ tự đang hiển thị
+    // Lấy tất cả giao dịch trong ngày đó theo đúng thứ tự đang hiển thị
     const dayTxs = transactions
       .filter((t) => t.date === dateStr)
-      .sort((a, b) => {
-        if (a.order !== undefined && b.order !== undefined) {
-          return a.order - b.order;
-        }
-        if (a.order !== undefined) return -1;
-        if (b.order !== undefined) return 1;
-        if ((b.time || '') !== (a.time || '')) {
-          return (b.time || '').localeCompare(a.time || '');
-        }
-        return (b.createdAt || 0) - (a.createdAt || 0);
-      });
+      .sort((a, b) => compareTransactionsSameDay(a, b));
 
     const currentIndex = dayTxs.findIndex((t) => t.id === txId);
     if (currentIndex === -1) return;
@@ -339,17 +312,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
     const dayTxs = transactions
       .filter((t) => t.date === dateStr)
-      .sort((a, b) => {
-        if (a.order !== undefined && b.order !== undefined) {
-          return a.order - b.order;
-        }
-        if (a.order !== undefined) return -1;
-        if (b.order !== undefined) return 1;
-        if ((b.time || '') !== (a.time || '')) {
-          return (b.time || '').localeCompare(a.time || '');
-        }
-        return (b.createdAt || 0) - (a.createdAt || 0);
-      });
+      .sort((a, b) => compareTransactionsSameDay(a, b));
 
     const reversed = [...dayTxs].reverse();
 

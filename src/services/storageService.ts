@@ -44,6 +44,35 @@ export const getStoredTransactions = (): Transaction[] => {
   try {
     const parsed: Transaction[] = JSON.parse(data);
     if (Array.isArray(parsed)) {
+      // Chuẩn hóa thứ tự giao dịch ngày 29/09/2026 theo đúng thực tế tài chính:
+      // Khoản chuyển vào 3.000.000đ diễn ra TRƯỚC (order: 0, time: 17:16) để số dư Vietcombank tăng lên 3.452.013đ
+      // Sau đó khoản cho mượn 3.000.000đ diễn ra SAU (order: 1, time: 17:29) để số dư về lại 452.013đ (không bị âm tài khoản)
+      let needsSave = false;
+      const txTransferIn = parsed.find(
+        (t) => t.date === '2026-09-29' && t.type === 'transfer' && t.amount === 3000000
+      );
+      const txExpenseOut = parsed.find(
+        (t) => t.date === '2026-09-29' && t.type === 'expense' && t.amount === 3000000
+      );
+
+      if (txTransferIn && txExpenseOut) {
+        if (
+          txTransferIn.order !== 0 ||
+          txExpenseOut.order !== 1 ||
+          (txTransferIn.time || '') >= (txExpenseOut.time || '')
+        ) {
+          txTransferIn.order = 0;
+          txTransferIn.time = '17:16';
+          txExpenseOut.order = 1;
+          txExpenseOut.time = '17:29';
+          needsSave = true;
+        }
+      }
+
+      if (needsSave) {
+        localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(parsed));
+      }
+
       return parsed;
     }
     return [];
