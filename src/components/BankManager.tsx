@@ -110,9 +110,10 @@ export const BankManager: React.FC<BankManagerProps> = ({
   const [accInitialBalance, setInitialBalance] = useState<number>(0);
   const [accColor, setColor] = useState('#006533');
 
-  // Calculate actual calculated amount
-  const rawNum = Number(inputRawAmount) || 0;
-  const calculatedAmount = autoAdd000 ? rawNum * 1000 : rawNum;
+  // Calculate actual calculated amount (Hỗ trợ số lẻ như 0,217 = 217 đồng khi có autoAdd000)
+  const normalizedInput = String(inputRawAmount || '').trim().replace(',', '.');
+  const rawNum = parseFloat(normalizedInput) || 0;
+  const calculatedAmount = autoAdd000 ? Math.round(rawNum * 1000) : Math.round(rawNum);
 
   // Month transactions for active account
   const monthTransactions = transactions.filter((t) => {
@@ -741,13 +742,18 @@ export const BankManager: React.FC<BankManagerProps> = ({
               </div>
               <div className="relative">
                 <input
-                  type="number"
-                  min="1"
-                  step="any"
+                  type="text"
+                  inputMode="decimal"
                   required
-                  placeholder={autoAdd000 ? '100 (100.000đ)' : '100000'}
+                  placeholder={autoAdd000 ? 'Ví dụ: 100 hoặc 0,217' : '100000'}
                   value={inputRawAmount}
-                  onChange={(e) => setInputRawAmount(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    // Cho phép gõ số, dấu phẩy và dấu chấm
+                    if (/^[0-9.,]*$/.test(val)) {
+                      setInputRawAmount(val);
+                    }
+                  }}
                   className={`w-full px-3 py-2 pr-10 rounded-xl bg-white text-sm font-black focus:outline-none focus:ring-2 shadow-inner ${
                     subTab === 'chi'
                       ? 'text-rose-600 focus:ring-rose-400'
@@ -763,7 +769,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
               <span className="text-[10px] text-sky-300 block mt-0.5 text-center italic">
                 {rawNum > 0
                   ? `= ${formatCurrency(calculatedAmount)}`
-                  : '(Gõ 100 = 100.000 đ)'}
+                  : '(Gõ 100 = 100.000 đ | Gõ 0,217 = 217 đ)'}
               </span>
             </div>
 
@@ -981,8 +987,8 @@ export const BankManager: React.FC<BankManagerProps> = ({
                         <td className="py-2 px-3">
                           <input
                             type="number"
-                            min="1000"
-                            step="1000"
+                            min="1"
+                            step="any"
                             value={editAmount}
                             onChange={(e) =>
                               setEditAmount(e.target.value ? Number(e.target.value) : '')
