@@ -169,6 +169,7 @@ export const GeneralReportSheet: React.FC<GeneralReportSheetProps> = ({
             onSelectAccount={onSelectAccount}
             onOpenTransfer={onOpenTransfer}
             onOpenSalaryAllocation={onOpenSalaryAllocation}
+            onOpenCategoryManager={onOpenCategoryManager}
           />
         </section>
       )}

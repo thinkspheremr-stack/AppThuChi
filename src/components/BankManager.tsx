@@ -26,6 +26,8 @@ import {
   Camera,
   Pencil,
   Settings,
+  FileText,
+  AlertCircle,
 } from 'lucide-react';
 
 interface BankManagerProps {
@@ -47,9 +49,11 @@ interface BankManagerProps {
   debts?: DebtRecord[];
   onAddDebt?: (debt: Omit<DebtRecord, 'id' | 'createdAt' | 'paidAmount' | 'remainingAmount' | 'status' | 'payments'>) => void;
   onRecordPayment?: (debtId: string, payment: Omit<DebtPayment, 'id' | 'createdAt'>) => void;
-  onAddCategory?: (category: Omit<Category, 'id'>) => void;
+  onAddCategory?: (category: Omit<Category, 'id'>) => Category | void;
   onEditCategory?: (category: Category) => void;
   onDeleteCategory?: (categoryId: string) => void;
+  onResetCategories?: () => void;
+  onNavigateToSheet?: (sheet: 'thuchi' | 'tietkiem' | 'tonghop' | 'ghino') => void;
 }
 
 export const BankManager: React.FC<BankManagerProps> = ({
@@ -74,6 +78,8 @@ export const BankManager: React.FC<BankManagerProps> = ({
   onAddCategory,
   onEditCategory,
   onDeleteCategory,
+  onResetCategories,
+  onNavigateToSheet,
 }) => {
   // Active bank
   const activeAccountId = selectedAccountId || accounts[0]?.id || '';
@@ -127,8 +133,10 @@ export const BankManager: React.FC<BankManagerProps> = ({
   const [editAmount, setEditAmount] = useState<number | ''>('');
   const [editDescription, setEditDescription] = useState<string>('');
 
-  // Modal Add / Edit Account
+  // Modal Add / Edit / Remove Account (Thêm / Bớt tài khoản)
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+  const [accountModalTab, setAccountModalTab] = useState<'list' | 'add'>('list');
+  const [deletingAccountId, setDeletingAccountId] = useState<string | null>(null);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [accName, setAccName] = useState('');
   const [accType, setType] = useState<AccountType>('bank');
@@ -136,6 +144,9 @@ export const BankManager: React.FC<BankManagerProps> = ({
   const [accNumber, setAccountNumber] = useState('');
   const [accInitialBalance, setInitialBalance] = useState<number>(0);
   const [accColor, setColor] = useState('#006533');
+
+  // Toast thông báo đồng bộ sang Sheet Sổ Ghi Nợ
+  const [loanSyncToast, setLoanSyncToast] = useState<{ message: string; person?: string } | null>(null);
 
   // Calculate actual calculated amount (Hỗ trợ số lẻ như 0,217 = 217 đồng khi có autoAdd000)
   const normalizedInput = String(inputRawAmount || '').trim().replace(',', '.');
@@ -283,10 +294,21 @@ export const BankManager: React.FC<BankManagerProps> = ({
     if (subTab === 'chovay' || subTab === 'chuyen') {
       if (subTab === 'chovay' || transferMode === 'loan') {
         // Mục cho vay theo tài khoản (có mục cho mượn và có mục trả)
-        const person = borrowerName.trim();
+        // Nếu chưa nhập người mượn, cố gắng trích xuất từ nội dung ghi chú
+        let person = borrowerName.trim();
+        if (!person && inputDescription.trim()) {
+          const match = inputDescription.trim().match(/^(?:cho|cho vay|mượn|cho mượn)\s+([a-zA-ZÀ-ỹ0-9\s]{2,25})/i);
+          if (match && match[1]) {
+            person = match[1].trim();
+          } else if (inputDescription.trim().length <= 25) {
+            person = inputDescription.trim();
+          }
+        }
+        if (!person) person = 'Người mượn';
+
         if (loanAction === 'lend') {
           // 1. Cho mượn: Tiền xuất/chi từ tài khoản này
-          const desc = inputDescription.trim() || (person ? `Cho ${person} mượn` : 'Cho mượn tiền');
+          const desc = inputDescription.trim() || `Cho ${person} mượn`;
           onAddTransaction({
             type: 'expense',
             amount: calculatedAmount,
@@ -294,24 +316,29 @@ export const BankManager: React.FC<BankManagerProps> = ({
             time: new Date().toTimeString().slice(0, 5),
             accountId: activeAccount.id,
             description: desc,
-            note: person ? `Cho mượn • Người mượn: ${person}` : 'Khoản cho mượn từ tài khoản',
+            note: `Cho mượn • Người mượn: ${person}`,
             tags: ['loan', 'lend'],
           });
 
-          // Tự động đồng bộ vào Sổ Nợ nếu có
+          // Tự động đồng bộ vào Sheet Sổ Ghi Nợ
           if (onAddDebt) {
             onAddDebt({
               type: 'lend',
-              personName: person || 'Người mượn',
+              personName: person,
               originalAmount: calculatedAmount,
               startDate: formattedDate,
               description: desc,
               accountId: activeAccount.id,
             });
           }
+
+          setLoanSyncToast({
+            message: `Đã ghi nhận khoản cho mượn ${formatCurrency(calculatedAmount)} và tự động ghi thông tin của "${person}" sang Sheet Sổ Ghi Nợ!`,
+            person,
+          });
         } else {
           // 2. Trả: Người mượn trả tiền về tài khoản này (Thu vào)
-          const desc = inputDescription.trim() || (person ? `${person} trả tiền mượn` : 'Thu tiền cho mượn');
+          const desc = inputDescription.trim() || `${person} trả tiền mượn`;
           onAddTransaction({
             type: 'income',
             amount: calculatedAmount,
@@ -319,18 +346,22 @@ export const BankManager: React.FC<BankManagerProps> = ({
             time: new Date().toTimeString().slice(0, 5),
             accountId: activeAccount.id,
             description: desc,
-            note: person ? `Thu nợ / Được trả • Người trả: ${person}` : 'Khoản tiền người mượn trả về tài khoản',
+            note: `Thu nợ / Được trả • Người trả: ${person}`,
             tags: ['loan', 'repay'],
           });
 
-          // Nếu có khoản nợ khớp trong Sổ Nợ, tự động ghi nhận thanh toán
-          if (person && debts.length > 0 && onRecordPayment) {
-            const matchingDebt = debts.find(
+          // Tự động cập nhật giảm dư nợ trong Sheet Sổ Ghi Nợ
+          if (debts.length > 0 && onRecordPayment) {
+            let matchingDebt = debts.find(
               (d) =>
                 d.type === 'lend' &&
                 d.status !== 'paid' &&
+                person !== 'Người mượn' &&
                 d.personName.toLowerCase().includes(person.toLowerCase())
             );
+            if (!matchingDebt && debts.some((d) => d.type === 'lend' && d.status !== 'paid')) {
+              matchingDebt = debts.find((d) => d.type === 'lend' && d.status !== 'paid');
+            }
             if (matchingDebt) {
               onRecordPayment(matchingDebt.id, {
                 amount: calculatedAmount,
@@ -338,7 +369,21 @@ export const BankManager: React.FC<BankManagerProps> = ({
                 note: desc,
                 accountId: activeAccount.id,
               });
+              setLoanSyncToast({
+                message: `Đã ghi nhận tiền trả và tự động cập nhật giảm dư nợ của "${matchingDebt.personName}" trong Sheet Sổ Ghi Nợ!`,
+                person: matchingDebt.personName,
+              });
+            } else {
+              setLoanSyncToast({
+                message: `Đã ghi nhận tiền trả ${formatCurrency(calculatedAmount)} vào tài khoản ${activeAccount.name}!`,
+                person,
+              });
             }
+          } else {
+            setLoanSyncToast({
+              message: `Đã ghi nhận tiền trả ${formatCurrency(calculatedAmount)} vào tài khoản ${activeAccount.name}!`,
+              person,
+            });
           }
         }
       } else if (transferMode === 'bank') {
@@ -556,41 +601,35 @@ export const BankManager: React.FC<BankManagerProps> = ({
                   <button
                     type="button"
                     onClick={() => onSelectAccount(acc.id)}
-                    className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all shadow-xs ${
+                    className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${
                       isActive
                         ? 'bg-purple-700 text-white ring-2 ring-white/60 shadow-md scale-105'
                         : 'bg-sky-800/80 hover:bg-sky-700 text-sky-100 hover:text-white'
                     }`}
                     style={isActive && acc.color ? { backgroundColor: acc.color } : undefined}
+                    title={`Chọn tài khoản ${acc.name}`}
                   >
                     <CategoryIcon name={acc.iconName} className="w-4 h-4" />
                     <span>{acc.name}</span>
-
-                    {/* Delete button directly on tab if more than 1 account */}
-                    {accounts.length > 1 && (
-                      <span
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDeleteAccount(acc.id);
-                        }}
-                        className="ml-1 p-0.5 rounded-full hover:bg-rose-600 hover:text-white text-sky-200/90 transition-colors"
-                        title={`Xóa tài khoản ${acc.name}`}
-                      >
-                        <X className="w-3 h-3" />
-                      </span>
-                    )}
                   </button>
                 </div>
               );
             })}
 
-            {/* Thêm ngân hàng */}
+            {/* Thêm / Bớt tài khoản (Hợp nhất theo yêu cầu) */}
             <button
-              onClick={handleOpenAddAccount}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-sky-900/70 hover:bg-sky-800 text-sky-200 border border-sky-600/40 transition-colors"
+              type="button"
+              onClick={() => {
+                setAccountModalTab('list');
+                setEditingAccount(null);
+                setDeletingAccountId(null);
+                setIsAccountModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-sky-900/90 hover:bg-sky-800 text-sky-100 border border-sky-500/50 transition-all shadow-xs cursor-pointer hover:scale-102"
+              title="Quản lý tài khoản: Thêm mới hoặc bớt/xóa tài khoản an toàn"
             >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Thêm ngân hàng/ví</span>
+              <Plus className="w-3.5 h-3.5 text-amber-300" />
+              <span>Thêm / Bớt tài khoản</span>
             </button>
           </div>
 
@@ -648,28 +687,12 @@ export const BankManager: React.FC<BankManagerProps> = ({
                 <Edit2 className="w-3.5 h-3.5" />
               </button>
             )}
-
-            {/* Delete active bank button */}
-            {activeAccount && accounts.length > 1 && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDeleteAccount(activeAccount.id);
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600/90 hover:bg-rose-600 text-white font-bold text-xs rounded-xl shadow-xs transition-colors"
-                title={`Xóa ngân hàng ${activeAccount.name}`}
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Xóa ngân hàng</span>
-              </button>
-            )}
           </div>
         </div>
 
-        {/* Center / Highlight: Số dư hiện có, Thu & Chi */}
+        {/* Center / Highlight: Số dư hiện có, Thu & Chi (Theo đúng yêu cầu: Chỉ để Số dư hiện tại, Thu, Chi) */}
         <div className="max-w-md mx-auto space-y-3 py-1">
-          {/* Box 1: Số dư hiện có tại tài khoản (Được đưa lên đầu tiên và phóng to như Thu và Chi) */}
+          {/* Box 1: Số dư hiện có tại tài khoản */}
           <div className="bg-[#bde0fe] text-sky-950 rounded-xl p-3 flex items-center justify-between border border-sky-300/80 shadow-xs">
             <span className="font-extrabold text-sm uppercase tracking-wide flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />
@@ -685,7 +708,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
             <div className="flex items-center justify-between">
               <span className="font-extrabold text-sm uppercase tracking-wide flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-600" />
-                Thu (Tiền vào tài khoản):
+                Thu:
               </span>
               <span className="font-black text-lg text-emerald-800">
                 +{formatCurrency(totalInflow)}
@@ -711,29 +734,6 @@ export const BankManager: React.FC<BankManagerProps> = ({
               -{formatCurrency(totalOutflow)}
             </span>
           </div>
-
-          {/* Box 4: Cho vay theo tài khoản (Cho mượn & Trả) */}
-          {(totalLoanOut > 0 || totalLoanIn > 0) && (
-            <div className="bg-[#bde0fe] text-sky-950 rounded-xl p-3 border border-sky-300/80 shadow-xs space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="font-extrabold text-sm uppercase tracking-wide flex items-center gap-2">
-                  <Coins className="w-4 h-4 text-amber-700" />
-                  Mục Cho vay ({activeAccount?.name}):
-                </span>
-                <span className="font-black text-xs bg-amber-600/20 text-amber-950 px-2 py-0.5 rounded-lg border border-amber-600/30">
-                  Dư nợ cần thu: {formatCurrency(Math.max(0, totalLoanOut - totalLoanIn))}
-                </span>
-              </div>
-              <div className="text-[11px] text-sky-950 font-semibold flex items-center justify-between pt-0.5 border-t border-sky-300/60">
-                <span className="text-rose-900">
-                  • Cho mượn: -{formatCurrency(totalLoanOut)}
-                </span>
-                <span className="text-emerald-900">
-                  • Đã trả: +{formatCurrency(totalLoanIn)}
-                </span>
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
@@ -879,7 +879,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
 
         {/* BANNER THÔNG TIN & CHỌN MỤC: CHO MƯỢN VÀ TRẢ */}
         {(subTab === 'chovay' || (subTab === 'chuyen' && transferMode === 'loan')) && (
-          <div className="mb-4 p-3.5 rounded-xl bg-gradient-to-r from-amber-950/70 via-sky-950/70 to-emerald-950/70 border-2 border-amber-400/60 shadow-md animate-in fade-in space-y-3">
+          <div className="mb-4 p-3.5 rounded-xl bg-gradient-to-r from-sky-950/80 via-slate-900/90 to-sky-950/80 border-2 border-sky-400/50 shadow-md animate-in fade-in space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center font-bold border border-amber-500/40 shrink-0">
@@ -896,12 +896,25 @@ export const BankManager: React.FC<BankManagerProps> = ({
                     <span className="text-emerald-300 font-bold">
                       Đã được trả: <strong>+{formatCurrency(totalLoanIn)}</strong>
                     </span>
-                    <span className="text-amber-200 font-extrabold bg-amber-900/60 px-2 py-0.5 rounded border border-amber-500/50">
-                      Dư nợ cần thu: {formatCurrency(Math.max(0, totalLoanOut - totalLoanIn))}
+                    <span className="text-sky-300 italic">
+                      (Dữ liệu người nợ & chi tiết các khoản được tự động lưu sang Sheet Sổ Ghi Nợ)
                     </span>
                   </div>
                 </div>
               </div>
+
+              {/* Shortcut sang Sheet Sổ Ghi Nợ */}
+              {onNavigateToSheet && (
+                <button
+                  type="button"
+                  onClick={() => onNavigateToSheet('ghino')}
+                  className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs shadow-xs transition-all flex items-center gap-1.5 cursor-pointer hover:scale-102"
+                  title="Chuyển sang Sheet Sổ Ghi Nợ để theo dõi chi tiết danh sách người nợ"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Xem Sheet Sổ Ghi Nợ</span>
+                </button>
+              )}
 
               {/* 2 Nút bấm chuyển đổi trực tiếp: [Mục Cho mượn] & [Mục Trả] */}
               <div className="flex items-center gap-2 bg-black/50 p-1.5 rounded-xl border border-sky-500/40">
@@ -1620,148 +1633,381 @@ export const BankManager: React.FC<BankManagerProps> = ({
         </div>
       </div>
 
-      {/* Modal Add / Edit Account */}
+      {/* ========================================================================= */}
+      {/* MODAL THÊM / BỚT TÀI KHOẢN (HỢP NHẤT QUẢN LÝ AN TOÀN)                    */}
+      {/* ========================================================================= */}
       {isAccountModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-800">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-              <h3 className="font-bold text-base text-slate-800">
-                {editingAccount ? 'Chỉnh Sửa Tài Khoản' : 'Thêm Ngân Hàng / Ví Mới'}
-              </h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-xl w-full shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-150 text-slate-800 flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="p-4 sm:p-5 bg-gradient-to-r from-sky-900 to-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center font-bold shadow-xs">
+                  <Landmark className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-base sm:text-lg">
+                    Quản Lý Tài Khoản (Thêm / Bớt Tài Khoản)
+                  </h3>
+                  <p className="text-xs text-sky-200/90">
+                    Thêm ngân hàng/ví mới hoặc bớt/xóa an toàn tài khoản không còn dùng
+                  </p>
+                </div>
+              </div>
               <button
-                onClick={() => setIsAccountModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg"
+                type="button"
+                onClick={() => {
+                  setIsAccountModalOpen(false);
+                  setEditingAccount(null);
+                  setDeletingAccountId(null);
+                }}
+                className="p-1.5 text-sky-200 hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
               >
-                <X className="w-4 h-4" />
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleAccountSubmit} className="p-5 space-y-4">
-              {/* Type */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">
-                  Loại tài khoản
-                </label>
-                <div className="grid grid-cols-4 gap-2">
-                  {[
-                    { id: 'bank', label: 'Ngân hàng', icon: Landmark },
-                    { id: 'wallet', label: 'Ví điện tử', icon: Wallet },
-                    { id: 'cash', label: 'Tiền mặt', icon: Banknote },
-                    { id: 'credit', label: 'Tín dụng', icon: CreditCard },
-                  ].map((t) => {
-                    const Icon = t.icon;
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => setType(t.id as AccountType)}
-                        className={`flex flex-col items-center justify-center p-2 rounded-xl border text-xs font-medium transition-all ${
-                          accType === t.id
-                            ? 'border-emerald-600 bg-emerald-50 text-emerald-800'
-                            : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        <Icon className="w-4 h-4 mb-1" />
-                        <span className="text-[11px]">{t.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+            {/* Tabs bên trong Modal */}
+            <div className="flex items-center border-b border-slate-200 bg-slate-50 px-4 pt-3 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setAccountModalTab('list');
+                  setDeletingAccountId(null);
+                }}
+                className={`px-4 py-2 rounded-t-xl text-xs font-black transition-all border-b-2 cursor-pointer ${
+                  accountModalTab === 'list'
+                    ? 'border-sky-600 text-sky-700 bg-white shadow-2xs'
+                    : 'border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                }`}
+              >
+                Danh Sách & Bớt Tài Khoản ({accounts.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAccountModalTab('add');
+                  if (!editingAccount) {
+                    setAccName('');
+                    setType('bank');
+                    setBankName('');
+                    setAccountNumber('');
+                    setInitialBalance(0);
+                    setColor('#006533');
+                  }
+                }}
+                className={`px-4 py-2 rounded-t-xl text-xs font-black transition-all border-b-2 cursor-pointer ${
+                  accountModalTab === 'add'
+                    ? 'border-emerald-600 text-emerald-700 bg-white shadow-2xs'
+                    : 'border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                }`}
+              >
+                {editingAccount ? 'Sửa Tài Khoản' : '+ Thêm Tài Khoản Mới'}
+              </button>
+            </div>
 
-              {/* Name */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">
-                  Tên tài khoản / Ngân hàng <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={accName}
-                  onChange={(e) => setAccName(e.target.value)}
-                  placeholder="Ví dụ: Vietcombank, Techcombank, Ví MoMo..."
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                />
-              </div>
-
-              {/* Number & Color */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">
-                    Số tài khoản (tùy chọn)
-                  </label>
-                  <input
-                    type="text"
-                    value={accNumber}
-                    onChange={(e) => setAccountNumber(e.target.value)}
-                    placeholder="****1234"
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Màu sắc</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="color"
-                      value={accColor}
-                      onChange={(e) => setColor(e.target.value)}
-                      className="w-9 h-9 p-0.5 rounded-lg border border-slate-200 cursor-pointer"
-                    />
-                    <span className="text-xs text-slate-500 font-mono">{accColor}</span>
+            {/* Nội dung Tab */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5">
+              {accountModalTab === 'list' ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-xs text-slate-500 pb-1 border-b border-slate-100">
+                    <span className="font-bold">Danh sách tất cả tài khoản / ngân hàng / ví:</span>
+                    <span className="italic">Bấm bút chì để sửa, bấm thùng rác để bớt/xóa</span>
                   </div>
-                </div>
-              </div>
 
-              {/* Balance */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">
-                  Số dư ban đầu (đ)
-                </label>
-                <input
-                  type="number"
-                  value={accInitialBalance}
-                  onChange={(e) => setInitialBalance(Number(e.target.value))}
-                  placeholder="0"
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                />
-              </div>
+                  <div className="space-y-2.5">
+                    {accounts.map((acc) => {
+                      const isDeleting = deletingAccountId === acc.id;
+                      return (
+                        <div
+                          key={acc.id}
+                          className="p-3.5 rounded-xl border border-slate-200 bg-white hover:border-slate-300 transition-all shadow-2xs space-y-2.5"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div
+                                className="w-10 h-10 rounded-xl flex items-center justify-center text-white shrink-0 shadow-xs"
+                                style={{ backgroundColor: acc.color || '#006533' }}
+                              >
+                                <CategoryIcon name={acc.iconName} className="w-5 h-5" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="font-black text-sm text-slate-900 flex items-center gap-2">
+                                  <span className="truncate">{acc.name}</span>
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                                    {acc.type === 'wallet'
+                                      ? 'Ví điện tử'
+                                      : acc.type === 'cash'
+                                      ? 'Tiền mặt'
+                                      : acc.type === 'credit'
+                                      ? 'Thẻ tín dụng'
+                                      : 'Ngân hàng'}
+                                  </span>
+                                </div>
+                                <div className="text-xs text-slate-500 font-medium mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                                  <span>
+                                    Số dư hiện tại:{' '}
+                                    <strong className="text-emerald-700 font-bold">
+                                      {formatCurrency(acc.balance || 0)}
+                                    </strong>
+                                  </span>
+                                  {acc.accountNumber && (
+                                    <span className="text-slate-400">STK: {acc.accountNumber}</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
 
-              {/* Actions */}
-              <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
-                {editingAccount && accounts.length > 1 ? (
+                            {/* Nút hành động */}
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleOpenEditAccount(acc);
+                                  setAccountModalTab('add');
+                                }}
+                                className="p-2 rounded-lg text-slate-600 hover:text-sky-700 hover:bg-sky-50 transition-colors cursor-pointer"
+                                title="Sửa thông tin tài khoản này"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+
+                              {accounts.length > 1 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setDeletingAccountId(acc.id)}
+                                  className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                  title="Bớt / Xóa tài khoản này"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              ) : (
+                                <span className="text-[10px] text-slate-400 italic px-1">
+                                  (Giữ lại)
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Inline Confirmation when deleting */}
+                          {isDeleting && (
+                            <div className="p-3 bg-rose-50 border border-rose-300 rounded-xl flex flex-wrap items-center justify-between gap-2 animate-in fade-in">
+                              <div className="flex items-center gap-2 text-xs text-rose-900 font-medium">
+                                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                                <span>
+                                  Bạn có chắc chắn muốn bớt/xóa tài khoản{' '}
+                                  <strong>&quot;{acc.name}&quot;</strong>?
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => setDeletingAccountId(null)}
+                                  className="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-lg border border-slate-300 cursor-pointer"
+                                >
+                                  Hủy
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onDeleteAccount(acc.id);
+                                    setDeletingAccountId(null);
+                                  }}
+                                  className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black rounded-lg shadow-xs cursor-pointer"
+                                >
+                                  Xác nhận xóa
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Nút thêm mới chuyển sang tab Add */}
                   <button
                     type="button"
                     onClick={() => {
-                      onDeleteAccount(editingAccount.id);
-                      setIsAccountModalOpen(false);
+                      setEditingAccount(null);
+                      setAccName('');
+                      setType('bank');
+                      setBankName('');
+                      setAccountNumber('');
+                      setInitialBalance(0);
+                      setColor('#006533');
+                      setAccountModalTab('add');
                     }}
-                    className="px-3.5 py-2 rounded-xl text-xs font-bold text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 hover:border-rose-600 transition-colors flex items-center gap-1"
+                    className="w-full py-2.5 px-3 mt-3 rounded-xl border-2 border-dashed border-sky-300 hover:border-sky-500 hover:bg-sky-50 text-sky-800 text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Xóa ngân hàng này</span>
-                  </button>
-                ) : (
-                  <div />
-                )}
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsAccountModalOpen(false)}
-                    className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                  >
-                    Hủy
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-5 py-2 rounded-xl text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm"
-                  >
-                    {editingAccount ? 'Lưu Thay Đổi' : 'Thêm Ngân Hàng'}
+                    <Plus className="w-4 h-4 text-sky-600" />
+                    <span>+ Thêm Ngân Hàng / Ví Mới</span>
                   </button>
                 </div>
-              </div>
-            </form>
+              ) : (
+                /* Tab Add / Edit Account Form */
+                <form onSubmit={handleAccountSubmit} className="space-y-4">
+                  {/* Preset Quick Suggestions */}
+                  {!editingAccount && (
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                      <span className="text-[11px] font-bold text-slate-600 block">
+                        Chọn nhanh mẫu tài khoản phổ biến:
+                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {[
+                          { name: 'Techcombank', color: '#E01B22', type: 'bank' as AccountType },
+                          { name: 'MB Bank', color: '#0B4A99', type: 'bank' as AccountType },
+                          { name: 'VietinBank', color: '#005baa', type: 'bank' as AccountType },
+                          { name: 'Agribank', color: '#800000', type: 'bank' as AccountType },
+                          { name: 'Ví MoMo', color: '#A50064', type: 'wallet' as AccountType },
+                          { name: 'Ví ZaloPay', color: '#0068FF', type: 'wallet' as AccountType },
+                          { name: 'Tiền mặt', color: '#16a34a', type: 'cash' as AccountType },
+                        ].map((preset) => (
+                          <button
+                            key={preset.name}
+                            type="button"
+                            onClick={() => {
+                              setAccName(preset.name);
+                              setBankName(preset.name);
+                              setType(preset.type);
+                              setColor(preset.color);
+                            }}
+                            className="px-2.5 py-1 bg-white hover:bg-sky-50 text-slate-700 hover:text-sky-800 border border-slate-200 rounded-lg text-[11px] font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+                          >
+                            <span
+                              className="w-2.5 h-2.5 rounded-full inline-block"
+                              style={{ backgroundColor: preset.color }}
+                            />
+                            <span>+ {preset.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Type */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Loại tài khoản
+                    </label>
+                    <div className="grid grid-cols-4 gap-2">
+                      {[
+                        { id: 'bank', label: 'Ngân hàng', icon: Landmark },
+                        { id: 'wallet', label: 'Ví điện tử', icon: Wallet },
+                        { id: 'cash', label: 'Tiền mặt', icon: Banknote },
+                        { id: 'credit', label: 'Tín dụng', icon: CreditCard },
+                      ].map((t) => {
+                        const Icon = t.icon;
+                        return (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => setType(t.id as AccountType)}
+                            className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                              accType === t.id
+                                ? 'border-sky-600 bg-sky-50 text-sky-900 ring-1 ring-sky-500'
+                                : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                            }`}
+                          >
+                            <Icon className="w-4 h-4 mb-1" />
+                            <span className="text-[11px]">{t.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Name */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Tên tài khoản / Ngân hàng <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={accName}
+                      onChange={(e) => setAccName(e.target.value)}
+                      placeholder="Ví dụ: Vietcombank, Techcombank, Ví MoMo..."
+                      className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+                    />
+                  </div>
+
+                  {/* Number & Color */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Số tài khoản (tùy chọn)
+                      </label>
+                      <input
+                        type="text"
+                        value={accNumber}
+                        onChange={(e) => setAccountNumber(e.target.value)}
+                        placeholder="****1234"
+                        className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Màu sắc nhận diện
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={accColor}
+                          onChange={(e) => setColor(e.target.value)}
+                          className="w-10 h-10 p-0.5 rounded-xl border border-slate-300 cursor-pointer"
+                        />
+                        <span className="text-xs text-slate-600 font-mono font-bold">
+                          {accColor}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Balance */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Số dư ban đầu (VNĐ)
+                    </label>
+                    <input
+                      type="number"
+                      value={accInitialBalance}
+                      onChange={(e) => setInitialBalance(Number(e.target.value))}
+                      placeholder="0"
+                      className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+                    />
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => setAccountModalTab('list')}
+                      className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                    >
+                      Quay lại danh sách
+                    </button>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsAccountModalOpen(false)}
+                        className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                      >
+                        Đóng
+                      </button>
+                      <button
+                        type="submit"
+                        className="px-5 py-2 rounded-xl text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm transition-colors cursor-pointer"
+                      >
+                        {editingAccount ? 'Lưu Thay Đổi' : 'Thêm Tài Khoản'}
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1789,10 +2035,50 @@ export const BankManager: React.FC<BankManagerProps> = ({
         onClose={() => setIsCategoryModalOpen(false)}
         categories={categories}
         transactions={transactions}
-        onAddCategory={(cat) => onAddCategory && onAddCategory(cat)}
+        initialType={subTab === 'thu' ? 'income' : 'expense'}
+        onAddCategory={(cat) => {
+          if (onAddCategory) {
+            const created = onAddCategory(cat);
+            if (created) {
+              setSelectedCategoryId(created.id);
+            }
+            return created;
+          }
+        }}
         onEditCategory={(cat) => onEditCategory && onEditCategory(cat)}
         onDeleteCategory={(catId) => onDeleteCategory && onDeleteCategory(catId)}
+        onResetCategories={onResetCategories}
+        onCategoryCreated={(newCat) => setSelectedCategoryId(newCat.id)}
       />
+
+      {/* Toast thông báo đồng bộ sang Sheet Sổ Ghi Nợ */}
+      {loanSyncToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-3 duration-200">
+          <div className="bg-slate-900/95 text-white px-4 sm:px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border border-amber-400/60 backdrop-blur-md max-w-lg">
+            <Coins className="w-5 h-5 text-amber-400 shrink-0" />
+            <span className="text-xs font-bold text-sky-100 flex-1">{loanSyncToast.message}</span>
+            {onNavigateToSheet && (
+              <button
+                type="button"
+                onClick={() => {
+                  onNavigateToSheet('ghino');
+                  setLoanSyncToast(null);
+                }}
+                className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs rounded-xl shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+              >
+                Mở Sổ Ghi Nợ
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setLoanSyncToast(null)}
+              className="text-slate-400 hover:text-white p-1 rounded-lg transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

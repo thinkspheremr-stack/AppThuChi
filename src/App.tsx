@@ -36,6 +36,8 @@ import { DebtManager } from './components/DebtManager';
 import { BackupRestoreModal } from './components/BackupRestoreModal';
 import { SavingsManager } from './components/SavingsManager';
 import { GeneralReportSheet } from './components/GeneralReportSheet';
+import { CategoryManagerModal } from './components/CategoryManagerModal';
+import { DEFAULT_CATEGORIES } from './data/initialData';
 import { Wallet, FileText, PiggyBank, Layers } from 'lucide-react';
 
 export default function App() {
@@ -99,6 +101,7 @@ export default function App() {
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
   const [isSalaryModalOpen, setIsSalaryModalOpen] = useState(false);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
 
   // Auto-backup debounce timer ref
   const autoBackupTimeout = useRef<NodeJS.Timeout | null>(null);
@@ -375,7 +378,8 @@ export default function App() {
     newAccounts: Account[],
     newTransactions: Transaction[],
     newCategories: Category[],
-    newReminders: ReminderSetting[]
+    newReminders: ReminderSetting[],
+    newDebts?: DebtRecord[]
   ) => {
     if (!currentUser) return;
     if (autoBackupTimeout.current) clearTimeout(autoBackupTimeout.current);
@@ -388,7 +392,8 @@ export default function App() {
           newAccounts,
           newTransactions,
           newCategories,
-          newReminders
+          newReminders,
+          newDebts || debts
         );
         setLastSyncedAt(syncedTime);
         localStorage.setItem('so_thuchi_last_synced', syncedTime);
@@ -552,6 +557,39 @@ export default function App() {
     triggerAutoBackup(nextAccounts, transactions, categories, reminders);
   };
 
+  // --- Handlers for Categories (Sửa, Thêm & Bớt Danh Mục) ---
+  const handleAddCategory = (catData: Omit<Category, 'id'>): Category => {
+    const newCat: Category = {
+      ...catData,
+      id: `cat-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    };
+    const nextCategories = [...categories, newCat];
+    setCategories(nextCategories);
+    saveCategories(nextCategories);
+    triggerAutoBackup(rawAccounts, transactions, nextCategories, reminders);
+    return newCat;
+  };
+
+  const handleEditCategory = (updatedCat: Category) => {
+    const nextCategories = categories.map((c) => (c.id === updatedCat.id ? updatedCat : c));
+    setCategories(nextCategories);
+    saveCategories(nextCategories);
+    triggerAutoBackup(rawAccounts, transactions, nextCategories, reminders);
+  };
+
+  const handleDeleteCategory = (categoryId: string) => {
+    const nextCategories = categories.filter((c) => c.id !== categoryId);
+    setCategories(nextCategories);
+    saveCategories(nextCategories);
+    triggerAutoBackup(rawAccounts, transactions, nextCategories, reminders);
+  };
+
+  const handleResetCategories = () => {
+    setCategories(DEFAULT_CATEGORIES);
+    saveCategories(DEFAULT_CATEGORIES);
+    triggerAutoBackup(rawAccounts, transactions, DEFAULT_CATEGORIES, reminders);
+  };
+
   // --- Quick Transfer between Accounts ---
   const handleOpenTransfer = (sourceAccountId?: string) => {
     setEditingTransaction(null);
@@ -585,18 +623,21 @@ export default function App() {
     const nextDebts = [newDebt, ...debts];
     setDebts(nextDebts);
     saveDebts(nextDebts);
+    triggerAutoBackup(rawAccounts, transactions, categories, reminders, nextDebts);
   };
 
   const handleEditDebt = (updatedDebt: DebtRecord) => {
     const nextDebts = debts.map((d) => (d.id === updatedDebt.id ? updatedDebt : d));
     setDebts(nextDebts);
     saveDebts(nextDebts);
+    triggerAutoBackup(rawAccounts, transactions, categories, reminders, nextDebts);
   };
 
   const handleDeleteDebt = (id: string) => {
     const nextDebts = debts.filter((d) => d.id !== id);
     setDebts(nextDebts);
     saveDebts(nextDebts);
+    triggerAutoBackup(rawAccounts, transactions, categories, reminders, nextDebts);
   };
 
   const handleRecordDebtPayment = (debtId: string, paymentData: Omit<DebtPayment, 'id' | 'createdAt'>) => {
@@ -623,6 +664,7 @@ export default function App() {
 
     setDebts(nextDebts);
     saveDebts(nextDebts);
+    triggerAutoBackup(rawAccounts, transactions, categories, reminders, nextDebts);
   };
 
   const handleMarkDebtAsPaid = (debtId: string) => {
@@ -637,6 +679,7 @@ export default function App() {
     });
     setDebts(nextDebts);
     saveDebts(nextDebts);
+    triggerAutoBackup(rawAccounts, transactions, categories, reminders, nextDebts);
   };
 
   // --- Backup / Restore / Reset ---
@@ -738,6 +781,7 @@ export default function App() {
         lastAutoSavedAt={lastAutoSavedAt}
         onManualSave={handleManualSaveAll}
         onOpenBackupModal={() => setIsBackupRestoreModalOpen(true)}
+        onOpenCategoryModal={() => setIsCategoryModalOpen(true)}
         onChangeMonth={setCurrentMonth}
         onOpenAddModal={(type) => handleOpenAddTransaction(type || 'expense')}
         onOpenReminderModal={() => setIsReminderModalOpen(true)}
@@ -872,6 +916,11 @@ export default function App() {
               debts={debts}
               onAddDebt={handleAddDebt}
               onRecordPayment={handleRecordDebtPayment}
+              onAddCategory={handleAddCategory}
+              onEditCategory={handleEditCategory}
+              onDeleteCategory={handleDeleteCategory}
+              onResetCategories={handleResetCategories}
+              onNavigateToSheet={(sheet) => setActiveSheet(sheet)}
             />
 
             {/* 2. Transactions List */}
@@ -917,6 +966,7 @@ export default function App() {
             onChangeMonth={setCurrentMonth}
             onOpenTransfer={handleOpenTransfer}
             onOpenSalaryAllocation={() => setIsSalaryModalOpen(true)}
+            onOpenCategoryManager={() => setIsCategoryModalOpen(true)}
           />
         )}
 
@@ -955,6 +1005,7 @@ export default function App() {
         initialType={transactionModalType}
         editingTransaction={editingTransaction}
         onSave={handleSaveTransaction}
+        onOpenCategoryManager={() => setIsCategoryModalOpen(true)}
       />
 
       <ReminderModal
@@ -1015,6 +1066,17 @@ export default function App() {
             );
           }
         }}
+      />
+
+      <CategoryManagerModal
+        isOpen={isCategoryModalOpen}
+        onClose={() => setIsCategoryModalOpen(false)}
+        categories={categories}
+        transactions={transactions}
+        onAddCategory={handleAddCategory}
+        onEditCategory={handleEditCategory}
+        onDeleteCategory={handleDeleteCategory}
+        onResetCategories={handleResetCategories}
       />
     </div>
   );

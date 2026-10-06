@@ -33,6 +33,7 @@ interface FinancialReportTableProps {
   onSelectAccount: (accountId: string | null) => void;
   onOpenTransfer?: () => void;
   onOpenSalaryAllocation?: () => void;
+  onOpenCategoryManager?: () => void;
 }
 
 export const FinancialReportTable: React.FC<FinancialReportTableProps> = ({
@@ -44,6 +45,7 @@ export const FinancialReportTable: React.FC<FinancialReportTableProps> = ({
   onSelectAccount,
   onOpenTransfer,
   onOpenSalaryAllocation,
+  onOpenCategoryManager,
 }) => {
   const [activeReportTab, setActiveReportTab] = useState<'all' | 'savings' | 'transfers' | 'category'>('all');
 
@@ -743,6 +745,7 @@ export const FinancialReportTable: React.FC<FinancialReportTableProps> = ({
               categories={categories}
               currentMonth={currentMonth}
               onSelectAccount={onSelectAccount}
+              onOpenCategoryManager={onOpenCategoryManager}
             />
           </div>
         )}
