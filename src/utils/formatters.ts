@@ -81,62 +81,39 @@ export const getDaysInMonth = (year: number, month: number): number => {
 };
 
 /**
- * So sánh thứ tự 2 giao dịch diễn ra trong cùng một ngày theo quy tắc tài chính chuẩn xác:
+ * So sánh thứ tự 2 giao dịch diễn ra trong cùng một ngày theo quy tắc chuẩn xác:
  * 1. Tôn trọng order người dùng đã thiết lập (nếu có di chuyển ▲/▼ thủ công)
- * 2. Tự động phân tích quan hệ dòng tiền trên tài khoản chung giữa 2 giao dịch:
- *    - Nếu cả 2 cùng tác động lên một tài khoản ngân hàng (ví dụ Bắc Á, Vietcombank...):
- *      Giao dịch làm TĂNG tiền tài khoản (Income hoặc Chuyển khoản đến nhận tiền)
- *      BẮT BUỘC PHẢI DIỄN RA TRƯỚC giao dịch làm GIẢM tiền tài khoản (Expense hoặc Chuyển khoản đi/tiết kiệm)
- *      để tiền nạp vào trước rồi mới chi/chuyển đi, tránh số dư bị âm vô lý!
- * 3. Ưu tiên tiền vào hệ thống trước tiền ra khỏi hệ thống
- * 4. So sánh thời gian (giờ:phút sớm hơn diễn ra trước)
- * 5. So sánh thời điểm khởi tạo createdAt
+ * 2. So sánh mốc thời gian (giờ:phút). Giờ sớm hơn diễn ra trước (ví dụ 09:30 trước 15:45).
+ * 3. Nếu cùng giờ hoặc không có giờ: Ghi nhận theo thời gian điền vào (cái nào nhập trước xem như có trước: createdAt)
+ * 4. Fallback so sánh ID nếu thời điểm tạo trùng nhau
  */
 export const compareTransactionsSameDay = (a: Transaction, b: Transaction): number => {
-  // 1. Tôn trọng order người dùng đã thiết lập
+  // 1. Tôn trọng order người dùng đã thiết lập thủ công
   if (a.order !== undefined && b.order !== undefined) {
     if (a.order !== b.order) return a.order - b.order;
   }
   if (a.order !== undefined) return -1;
   if (b.order !== undefined) return 1;
 
-  // 2. Tìm tài khoản chung giữa 2 giao dịch (loại trừ 'saving')
-  const aAccounts = [a.accountId, a.toAccountId].filter(Boolean) as string[];
-  const bAccounts = [b.accountId, b.toAccountId].filter(Boolean) as string[];
-  const commonAccount = aAccounts.find((id) => id !== 'saving' && bAccounts.includes(id));
-
-  if (commonAccount) {
-    // Xác định giao dịch nào làm TĂNG (+1) tiền tài khoản chung và giao dịch nào làm GIẢM (-1)
-    const getEffectOnAccount = (tx: Transaction, accId: string): number => {
-      if (tx.type === 'income' && tx.accountId === accId) return 1;
-      if (tx.type === 'transfer' && tx.toAccountId === accId) return 1;
-      if (tx.type === 'expense' && tx.accountId === accId) return -1;
-      if (tx.type === 'transfer' && tx.accountId === accId) return -1;
-      return 0;
-    };
-
-    const effectA = getEffectOnAccount(a, commonAccount);
-    const effectB = getEffectOnAccount(b, commonAccount);
-
-    // Giao dịch nạp tiền (+1) PHẢI đi trước giao dịch rút tiền/chi tiêu (-1)
-    if (effectA > effectB) return -1;
-    if (effectA < effectB) return 1;
+  // 2. So sánh mốc thời gian (HH:mm)
+  const timeA = (a.time || '').trim();
+  const timeB = (b.time || '').trim();
+  if (timeA && timeB && timeA !== timeB) {
+    return timeA.localeCompare(timeB);
   }
 
-  // 3. Ưu tiên tiền vào chung trước tiền ra
-  const isPureInflow = (tx: Transaction) =>
-    tx.type === 'income' || (tx.type === 'transfer' && Boolean(tx.toAccountId) && tx.toAccountId !== 'saving');
-  const isPureOutflow = (tx: Transaction) =>
-    tx.type === 'expense' || (tx.type === 'transfer' && (!tx.toAccountId || tx.toAccountId === 'saving'));
-
-  if (isPureInflow(a) && isPureOutflow(b)) return -1;
-  if (isPureOutflow(a) && isPureInflow(b)) return 1;
-
-  // 4. So sánh giờ
-  if ((a.time || '') !== (b.time || '')) {
-    return (a.time || '').localeCompare(b.time || '');
+  // 3. Nếu cùng mốc giờ hoặc cả 2 không có giờ: Sắp xếp theo thời điểm điền vào (cái nào tạo trước diễn ra trước)
+  const createdA = typeof a.createdAt === 'number' ? a.createdAt : 0;
+  const createdB = typeof b.createdAt === 'number' ? b.createdAt : 0;
+  if (createdA !== createdB) {
+    return createdA - createdB;
   }
 
-  // 5. So sánh thời điểm tạo
-  return (a.createdAt || 0) - (b.createdAt || 0);
+  // 4. Nếu 1 bên có time và 1 bên không có: bên có time rõ ràng được ưu tiên
+  if (timeA && !timeB) return -1;
+  if (!timeA && timeB) return 1;
+
+  // 5. Fallback ID
+  return (a.id || '').localeCompare(b.id || '');
 };
+

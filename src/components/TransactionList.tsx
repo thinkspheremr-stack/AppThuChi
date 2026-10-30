@@ -27,6 +27,7 @@ import {
   Sparkles,
   CheckCircle2,
   Info,
+  Clock,
 } from 'lucide-react';
 
 interface TransactionListProps {
@@ -62,6 +63,11 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   // Sửa nhanh số tiền trực tiếp (Inline edit amount)
   const [editingAmountTxId, setEditingAmountTxId] = useState<string | null>(null);
   const [inlineAmount, setInlineAmount] = useState<string>('');
+
+  // Sửa nhanh giờ giao dịch trực tiếp (Inline edit time)
+  const [editingTimeTxId, setEditingTimeTxId] = useState<string | null>(null);
+  const [inlineTime, setInlineTime] = useState<string>('');
+
   const [feedbackToast, setFeedbackToast] = useState<string | null>(null);
 
   // Điều chỉnh / Cân đối Số tiền còn lại (Adjust remaining balance modal)
@@ -423,6 +429,30 @@ export const TransactionList: React.FC<TransactionListProps> = ({
       `✓ Đã cập nhật số tiền thành ${formatCurrency(val)}. Số tiền còn lại của các ngày sau đó đã tự động tính lại chuẩn xác theo tất cả giao dịch!`
     );
     setTimeout(() => setFeedbackToast(null), 5000);
+  };
+
+  const handleStartEditTime = (tx: Transaction) => {
+    setEditingTimeTxId(tx.id);
+    setInlineTime(tx.time || '12:00');
+  };
+
+  const handleSaveInlineTime = (txId: string) => {
+    const formatted = inlineTime.trim();
+    if (!formatted) return;
+
+    const targetTx = transactions.find((t) => t.id === txId);
+    if (!targetTx) return;
+
+    const nextTransactions = transactions.map((t) => (t.id === txId ? { ...t, time: formatted } : t));
+    if (onUpdateTransactions) {
+      onUpdateTransactions(nextTransactions);
+    } else {
+      onEditTransaction({ ...targetTx, time: formatted });
+    }
+
+    setEditingTimeTxId(null);
+    setFeedbackToast(`✓ Đã cập nhật thời gian thành ${formatted}. Thứ tự và số tiền còn lại các giao dịch đã tự động tính toán lại.`);
+    setTimeout(() => setFeedbackToast(null), 4000);
   };
 
   // =========================================================================
@@ -946,8 +976,55 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                                             </span>
                                           )}
 
-                                          {tx.time && (
-                                            <span className="text-slate-400">• {tx.time}</span>
+                                          {/* Nút thời gian: hiển thị giờ và cho phép sửa trực tiếp hoặc bấm vào để sửa */}
+                                          {editingTimeTxId === tx.id ? (
+                                            <span
+                                              className="inline-flex items-center gap-1 bg-white px-2 py-0.5 rounded-lg border-2 border-sky-500 shadow-xs z-10"
+                                              onClick={(e) => e.stopPropagation()}
+                                            >
+                                              <Clock className="w-3 h-3 text-sky-600 shrink-0" />
+                                              <input
+                                                type="time"
+                                                value={inlineTime}
+                                                onChange={(e) => setInlineTime(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                  if (e.key === 'Enter') handleSaveInlineTime(tx.id);
+                                                  if (e.key === 'Escape') setEditingTimeTxId(null);
+                                                }}
+                                                autoFocus
+                                                className="text-xs font-bold text-slate-800 bg-transparent focus:outline-none"
+                                              />
+                                              <button
+                                                type="button"
+                                                onClick={() => handleSaveInlineTime(tx.id)}
+                                                className="p-0.5 rounded text-emerald-600 hover:bg-emerald-50 cursor-pointer"
+                                                title="Lưu thời gian (Enter)"
+                                              >
+                                                <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={() => setEditingTimeTxId(null)}
+                                                className="p-0.5 rounded text-slate-400 hover:bg-slate-100 cursor-pointer"
+                                                title="Hủy (Esc)"
+                                              >
+                                                <X className="w-3.5 h-3.5" />
+                                              </button>
+                                            </span>
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleStartEditTime(tx);
+                                              }}
+                                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-sky-700 hover:bg-sky-50 px-1.5 py-0.5 rounded-md transition-all group/time cursor-pointer border border-transparent hover:border-sky-300"
+                                              title="Bấm để sửa nhanh thời gian (giờ : phút) của giao dịch này"
+                                            >
+                                              <Clock className="w-3 h-3 text-slate-400 group-hover/time:text-sky-600" />
+                                              <span>{tx.time || '12:00'}</span>
+                                              <Pencil className="w-2.5 h-2.5 opacity-0 group-hover/time:opacity-100 text-sky-500 transition-opacity ml-0.5" />
+                                            </button>
                                           )}
 
                                           {tx.note && (

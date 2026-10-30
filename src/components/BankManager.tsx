@@ -28,6 +28,7 @@ import {
   Settings,
   FileText,
   AlertCircle,
+  Clock,
 } from 'lucide-react';
 
 interface BankManagerProps {
@@ -106,9 +107,17 @@ export const BankManager: React.FC<BankManagerProps> = ({
   // Today's day number as default
   const todayDay = new Date().getDate();
 
+  // Helper lấy giờ hiện tại (HH:mm)
+  const getCurrentTimeString = () => {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  };
+
   // INLINE ENTRY STATE (Theo đúng bản vẽ: Ngày | Số tiền | Nội dung)
   // Ngày: gõ trực tiếp số (ví dụ: gõ 1 -> ngày 01, gõ 15 -> ngày 15)
   const [inputDay, setInputDay] = useState<string>(String(todayDay));
+  // Ô thời gian dưới ô ngày (nếu không điền thì mặc định lấy theo thời gian điền)
+  const [inputTime, setInputTime] = useState<string>('');
   // Số tiền: gõ 100 -> tự động thêm 000 thành 100.000 đ
   const [inputRawAmount, setInputRawAmount] = useState<string>('');
   const [autoAdd000, setAutoAdd000] = useState<boolean>(true);
@@ -130,6 +139,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
   // Editing existing row inline state
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const [editDay, setEditDay] = useState<string>('');
+  const [editTime, setEditTime] = useState<string>('');
   const [editAmount, setEditAmount] = useState<number | ''>('');
   const [editDescription, setEditDescription] = useState<string>('');
 
@@ -290,6 +300,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
     if (isNaN(dayNumber) || dayNumber < 1) dayNumber = 1;
     if (dayNumber > 31) dayNumber = 31;
     const formattedDate = `${currentMonth}-${String(dayNumber).padStart(2, '0')}`;
+    const finalTxTime = (inputTime || '').trim() || getCurrentTimeString();
 
     if (subTab === 'chovay' || subTab === 'chuyen') {
       if (subTab === 'chovay' || transferMode === 'loan') {
@@ -313,7 +324,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
             type: 'expense',
             amount: calculatedAmount,
             date: formattedDate,
-            time: new Date().toTimeString().slice(0, 5),
+            time: finalTxTime,
             accountId: activeAccount.id,
             description: desc,
             note: `Cho mượn • Người mượn: ${person}`,
@@ -343,7 +354,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
             type: 'income',
             amount: calculatedAmount,
             date: formattedDate,
-            time: new Date().toTimeString().slice(0, 5),
+            time: finalTxTime,
             accountId: activeAccount.id,
             description: desc,
             note: `Thu nợ / Được trả • Người trả: ${person}`,
@@ -399,7 +410,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
           type: 'transfer',
           amount: calculatedAmount,
           date: formattedDate,
-          time: new Date().toTimeString().slice(0, 5),
+          time: finalTxTime,
           accountId: activeAccount.id, // Ngân hàng gửi
           toAccountId: targetId,       // Ngân hàng nhận
           description: inputDescription.trim() || `Chuyển sang ${targetAcc?.name || 'ngân hàng khác'}`,
@@ -412,7 +423,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
           type: 'transfer',
           amount: calculatedAmount,
           date: formattedDate,
-          time: new Date().toTimeString().slice(0, 5),
+          time: finalTxTime,
           accountId: activeAccount.id,
           toAccountId: 'saving',
           categoryId: 'cat-invest',
@@ -435,7 +446,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
         type: subTab === 'thu' ? 'income' : 'expense',
         amount: calculatedAmount,
         date: formattedDate,
-        time: new Date().toTimeString().slice(0, 5),
+        time: finalTxTime,
         accountId: activeAccount.id,
         categoryId: catToUse,
         description: inputDescription.trim() || (subTab === 'thu' ? 'Khoản thu' : 'Khoản chi'),
@@ -445,6 +456,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
 
     setInputRawAmount('');
     setInputDescription('');
+    setInputTime('');
     setBorrowerName('');
   };
 
@@ -453,6 +465,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
     setEditingRowId(tx.id);
     const day = parseInt(tx.date.split('-')[2], 10);
     setEditDay(String(day));
+    setEditTime(tx.time || getCurrentTimeString());
     setEditAmount(tx.amount);
     setEditDescription(tx.description);
   };
@@ -463,6 +476,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
     if (isNaN(dayNumber) || dayNumber < 1) dayNumber = 1;
     if (dayNumber > 31) dayNumber = 31;
     const formattedDate = `${currentMonth}-${String(dayNumber).padStart(2, '0')}`;
+    const formattedTime = (editTime || '').trim() || getCurrentTimeString();
 
     const originalTx = transactions.find((t) => t.id === txId);
     if (originalTx && editAmount && Number(editAmount) > 0) {
@@ -470,6 +484,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
         onEditTransaction({
           ...originalTx,
           date: formattedDate,
+          time: formattedTime,
           amount: Number(editAmount),
           description: editDescription.trim() || originalTx.description,
         });
@@ -477,6 +492,7 @@ export const BankManager: React.FC<BankManagerProps> = ({
         onAddTransaction({
           ...originalTx,
           date: formattedDate,
+          time: formattedTime,
           amount: Number(editAmount),
           description: editDescription.trim() || originalTx.description,
         });
@@ -1074,31 +1090,58 @@ export const BankManager: React.FC<BankManagerProps> = ({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-            {/* Cột 1: Ngày (gõ được luôn số 1..31) */}
-            <div className="sm:col-span-2">
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-[11px] font-black text-sky-100">
-                  Ngày (1-31)
-                </label>
-                <span className="text-[10px] text-sky-300 font-semibold">
-                  {String(inputDay || 1).padStart(2, '0')}/{String(monthNum).padStart(2, '0')}
+            {/* Cột 1: Ngày (gõ được luôn số 1..31) & Ô thời gian dưới ô ngày theo đúng yêu cầu */}
+            <div className="sm:col-span-2 space-y-1.5">
+              <div>
+                <div className="flex items-center justify-between mb-0.5">
+                  <label className="text-[11px] font-black text-sky-100">
+                    Ngày (1-31)
+                  </label>
+                  <span className="text-[10px] text-sky-300 font-semibold">
+                    {String(inputDay || 1).padStart(2, '0')}/{String(monthNum).padStart(2, '0')}
+                  </span>
+                </div>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="1"
+                    max="31"
+                    required
+                    placeholder="1"
+                    value={inputDay}
+                    onChange={(e) => setInputDay(e.target.value)}
+                    className="w-full px-2 py-1.5 rounded-lg bg-white text-slate-900 text-sm font-black focus:outline-none focus:ring-2 focus:ring-sky-400 text-center shadow-inner"
+                  />
+                </div>
+              </div>
+
+              {/* Ô THỜI GIAN DƯỚI Ô NGÀY */}
+              <div>
+                <div className="flex items-center justify-between mb-0.5">
+                  <label className="text-[10px] font-black text-sky-200 flex items-center gap-1">
+                    <Clock className="w-2.5 h-2.5 text-sky-300" />
+                    Thời gian
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setInputTime(getCurrentTimeString())}
+                    className="text-[9px] font-bold text-amber-300 hover:text-white underline cursor-pointer"
+                    title="Bấm để lấy giờ hiện tại"
+                  >
+                    Hiện tại
+                  </button>
+                </div>
+                <input
+                  type="time"
+                  value={inputTime}
+                  onChange={(e) => setInputTime(e.target.value)}
+                  placeholder="--:--"
+                  className="w-full px-1.5 py-1 rounded-lg bg-white text-slate-900 text-xs font-bold text-center focus:outline-none focus:ring-2 focus:ring-sky-400 shadow-inner"
+                />
+                <span className="text-[9px] text-sky-300 block text-center italic mt-0.5 leading-tight">
+                  (Trống = giờ điền)
                 </span>
               </div>
-              <div className="relative">
-                <input
-                  type="number"
-                  min="1"
-                  max="31"
-                  required
-                  placeholder="1"
-                  value={inputDay}
-                  onChange={(e) => setInputDay(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-white text-slate-900 text-sm font-black focus:outline-none focus:ring-2 focus:ring-sky-400 text-center shadow-inner"
-                />
-              </div>
-              <span className="text-[10px] text-sky-300 block mt-0.5 text-center italic">
-                (Gõ số ngày)
-              </span>
             </div>
 
             {/* Cột 2: Số tiền (gõ 100 tự động thêm 000 phía sau) */}
@@ -1412,16 +1455,38 @@ export const BankManager: React.FC<BankManagerProps> = ({
                   if (isEditingThisRow) {
                     return (
                       <tr key={tx.id} className="bg-sky-900/90 text-white">
-                        {/* Edit Ngày */}
+                        {/* Edit Ngày & Nút thời gian */}
                         <td className="py-2 px-3">
-                          <input
-                            type="number"
-                            min="1"
-                            max="31"
-                            value={editDay}
-                            onChange={(e) => setEditDay(e.target.value)}
-                            className="w-16 px-2 py-1 rounded bg-white text-slate-900 font-bold text-xs"
-                          />
+                          <div className="space-y-1.5 min-w-[140px]">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] text-sky-200 font-bold">Ngày:</span>
+                              <input
+                                type="number"
+                                min="1"
+                                max="31"
+                                value={editDay}
+                                onChange={(e) => setEditDay(e.target.value)}
+                                className="w-14 px-2 py-0.5 rounded bg-white text-slate-900 font-bold text-xs text-center"
+                              />
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-sky-300 shrink-0" />
+                              <input
+                                type="time"
+                                value={editTime}
+                                onChange={(e) => setEditTime(e.target.value)}
+                                className="w-20 px-1 py-0.5 rounded bg-white text-slate-900 font-bold text-xs text-center"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setEditTime(getCurrentTimeString())}
+                                className="text-[9px] bg-sky-800 hover:bg-sky-700 text-amber-300 px-1.5 py-0.5 rounded font-bold cursor-pointer"
+                                title="Bấm để lấy giờ hiện tại"
+                              >
+                                Giờ này
+                              </button>
+                            </div>
+                          </div>
                         </td>
 
                         {/* Edit Số tiền */}
@@ -1505,12 +1570,20 @@ export const BankManager: React.FC<BankManagerProps> = ({
                       key={tx.id}
                       className="hover:bg-sky-800/40 transition-colors group text-sky-100"
                     >
-                      {/* Cột 1: Ngày */}
+                      {/* Cột 1: Ngày & Giờ */}
                       <td className="py-2.5 px-4 font-semibold whitespace-nowrap text-sky-200">
-                        <span className="font-black text-white bg-sky-900/80 px-2 py-0.5 rounded-md border border-sky-600/40 mr-1.5">
-                          {dayNum}
-                        </span>
-                        <span>{formatFriendlyDate(tx.date)}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-black text-white bg-sky-900/80 px-2 py-0.5 rounded-md border border-sky-600/40">
+                            {dayNum}
+                          </span>
+                          <span>{formatFriendlyDate(tx.date)}</span>
+                        </div>
+                        {tx.time && (
+                          <div className="flex items-center gap-1 text-[11px] text-amber-300 font-bold mt-0.5 pl-0.5">
+                            <Clock className="w-3 h-3 text-amber-400 shrink-0" />
+                            <span>{tx.time}</span>
+                          </div>
+                        )}
                       </td>
 
                       {/* Cột 2: Số tiền */}

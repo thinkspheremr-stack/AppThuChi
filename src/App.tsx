@@ -501,10 +501,11 @@ export default function App() {
     batchData: Array<Omit<Transaction, 'id' | 'createdAt'>>
   ) => {
     if (!batchData.length) return;
+    const baseTime = Date.now();
     const newTxs: Transaction[] = batchData.map((d, index) => ({
       ...d,
-      id: `tx-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 7)}`,
-      createdAt: Date.now() - index * 10,
+      id: `tx-${baseTime}-${index}-${Math.random().toString(36).substring(2, 7)}`,
+      createdAt: baseTime + index * 10,
     }));
     const nextTransactions = [...newTxs, ...transactions];
     setTransactions(nextTransactions);

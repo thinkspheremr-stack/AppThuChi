@@ -38,6 +38,7 @@ interface EditableTransactionRow extends ExtractedTransactionItem {
   selected: boolean;
   accountId: string;
   categoryId: string;
+  time?: string;
 }
 
 export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
@@ -409,10 +410,12 @@ export const ReceiptScannerModal: React.FC<ReceiptScannerModalProps> = ({
       return;
     }
 
+    const currentTimeStr = `${String(new Date().getHours()).padStart(2, '0')}:${String(new Date().getMinutes()).padStart(2, '0')}`;
     const payload = selectedRows.map((r) => ({
       amount: r.amount,
       type: r.type,
       date: r.date,
+      time: r.time || currentTimeStr,
       accountId: r.accountId,
       categoryId: r.categoryId || (categories.find((c) => c.type === r.type)?.id || ''),
       description: r.description.trim() || (r.type === 'income' ? 'Khoản thu ngân hàng' : 'Khoản chi ngân hàng'),
